@@ -1,4 +1,4 @@
-module Bosh::Cli
+module Bosh::Cli::Versions
   class VersionFileResolver
 
     def initialize(storage, blobstore, tmpdir=Dir.tmpdir)
@@ -28,14 +28,7 @@ module Bosh::Cli
       tmp_file_path = File.join(@tmpdir, "bosh-tmp-file-#{SecureRandom.uuid}")
       begin
         File.open(tmp_file_path, 'w') do |tmp_file|
-          @blobstore.get(blobstore_id, tmp_file)
-        end
-
-        file_sha1 = Digest::SHA1.file(tmp_file_path).hexdigest
-        if file_sha1 != sha1
-          err("SHA1 `#{file_sha1}' of #{desc} from blobstore (id=#{blobstore_id}) " +
-            "does not match expected SHA1 `#{sha1}'" +
-            'please remove it manually and re-create the release')
+          @blobstore.get(blobstore_id, tmp_file, sha1: sha1)
         end
 
         @storage.put_file(version, tmp_file_path)
@@ -43,7 +36,5 @@ module Bosh::Cli
         FileUtils.rm(tmp_file_path, :force => true)
       end
     end
-
-
   end
 end
