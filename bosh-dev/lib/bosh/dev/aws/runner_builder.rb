@@ -6,23 +6,24 @@ require 'bosh/dev/aws/micro_bosh_deployment_manifest'
 require 'bosh/dev/aws/micro_bosh_deployment_cleaner'
 require 'bosh/dev/aws/bat_deployment_manifest'
 require 'bosh/dev/bat/runner'
+require 'logging'
 
 module Bosh::Dev::Aws
   class RunnerBuilder
     def build(artifacts, net_type)
       env    = ENV
-      logger = Logger.new(STDOUT)
+      logger = Logging.logger(STDOUT)
 
       director_address = Bosh::Dev::Bat::DirectorAddress.resolved_from_env(env, 'BOSH_VPC_SUBDOMAIN')
       bosh_cli_session = Bosh::Dev::BoshCliSession.default
       stemcell_archive = Bosh::Stemcell::Archive.new(artifacts.stemcell_path)
 
       microbosh_deployment_manifest =
-        MicroBoshDeploymentManifest.new(env)
+        MicroBoshDeploymentManifest.new(env, net_type)
       microbosh_deployment_cleaner =
         MicroBoshDeploymentCleaner.new(microbosh_deployment_manifest)
       bat_deployment_manifest =
-        BatDeploymentManifest.new(env, bosh_cli_session, stemcell_archive)
+        BatDeploymentManifest.new(env, net_type, bosh_cli_session, stemcell_archive)
 
       # rubocop:disable ParameterLists
       Bosh::Dev::Bat::Runner.new(

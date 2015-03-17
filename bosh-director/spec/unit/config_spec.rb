@@ -11,12 +11,12 @@ describe Bosh::Director::Config do
   describe 'initialization' do
     it 'loads config from a yaml file' do
       config = described_class.load_file(asset("test-director-config.yml"))
-      expect(config.hash).to include('name' => 'Test Director')
+      expect(config.name).to eq('Test Director')
     end
 
     it 'loads config from a hash' do
       config = described_class.load_hash(test_config)
-      expect(config.hash).to include('name' => 'Test Director')
+      expect(config.name).to eq('Test Director')
     end
   end
 
@@ -24,10 +24,7 @@ describe Bosh::Director::Config do
     context 'when hash has value set' do
       it 'returns the configuration value' do
         test_config['max_vm_create_tries'] = 3
-
-        config = described_class.load_hash(test_config)
-        described_class.configure(config.hash)
-
+        described_class.configure(test_config)
         expect(described_class.max_vm_create_tries).to eq(3)
       end
     end
@@ -37,10 +34,7 @@ describe Bosh::Director::Config do
         # our fixture does not have this set so this is a no-op
         # i'm doing this because i want to be more explicit
         test_config.delete('max_vm_create_tries')
-
-        config = described_class.load_hash(test_config)
-        described_class.configure(config.hash)
-
+        described_class.configure(test_config)
         expect(described_class.max_vm_create_tries).to eq(5)
       end
     end
@@ -48,20 +42,15 @@ describe Bosh::Director::Config do
     context 'when hash contains a non integral value' do
       it 'raises an error' do
         test_config['max_vm_create_tries'] = 'bad number'
-
-        config = described_class.load_hash(test_config)
         expect{
-          described_class.configure(config.hash)
+          described_class.configure(test_config)
         }.to raise_error(ArgumentError)
       end
     end
   end
 
   describe '#cloud' do
-    before do
-      config = described_class.load_hash(test_config)
-      described_class.configure(config.hash)
-    end
+    before { described_class.configure(test_config) }
 
     it 'creates the cloud from the provider' do
       cloud = double('cloud')
@@ -79,13 +68,93 @@ describe Bosh::Director::Config do
 
   describe '#cpi_task_log' do
     before do
-      config = described_class.load_hash(test_config)
-      described_class.configure(config.hash)
+      described_class.configure(test_config)
       described_class.cloud_options['properties']['cpi_log'] = 'fake-cpi-log'
     end
 
     it 'returns cpi task log' do
       expect(described_class.cpi_task_log).to eq('fake-cpi-log')
+    end
+  end
+
+  describe "#configure" do
+    context "when the config specifies a file logger" do
+      before { test_config["logging"]["file"] = "fake-file" }
+
+      it "configures the logger with a file appender" do
+        appender = Logging::Appender.new("file")
+        expect(Logging.appenders).to receive(:file).with(
+          'DirectorLogFile',
+          hash_including(filename: 'fake-file')
+        ).and_return(appender)
+        described_class.configure(test_config)
+      end
+    end
+  end
+
+  describe '#identity_provider' do
+    subject(:config) { Bosh::Director::Config.new(test_config) }
+    let(:temp_dir) { Dir.mktmpdir }
+    let(:base_config) do
+      blobstore_dir = File.join(temp_dir, 'blobstore')
+      FileUtils.mkdir_p(blobstore_dir)
+
+      config = Psych.load(spec_asset('test-director-config.yml'))
+      config['dir'] = temp_dir
+      config['blobstore'] = {
+        'provider' => 'local',
+        'options' => {'blobstore_path' => blobstore_dir}
+      }
+      config['snapshots']['enabled'] = true
+      config
+    end
+    let(:provider_options) { {'blobstore_path' => blobstore_dir} }
+
+    after { FileUtils.rm_rf(temp_dir) }
+
+    describe 'authentication configuration' do
+      let(:test_config) { base_config.merge({'user_management' => {'provider' => provider}}) }
+
+      context 'when no user_management config is specified' do
+        let(:test_config) { base_config }
+
+        it 'uses LocalIdentityProvider' do
+          expect(config.identity_provider).to be_a(Bosh::Director::Api::LocalIdentityProvider)
+        end
+      end
+
+      context 'when local provider is supplied' do
+        let(:provider) { 'local' }
+
+        it 'uses LocalIdentityProvider' do
+          expect(config.identity_provider).to be_a(Bosh::Director::Api::LocalIdentityProvider)
+        end
+      end
+
+      context 'when a bogus provider is supplied' do
+        let(:provider) { 'wrong' }
+
+        it 'should raise an error' do
+          expect { config.identity_provider }.to raise_error(ArgumentError)
+        end
+      end
+
+      context 'when uaa provider is supplied' do
+        let(:provider) { 'uaa' }
+        let(:provider_options) { {'key' => 'some-key', 'url' => 'some-url'} }
+        let(:token) { CF::UAA::TokenCoder.new(skey: 'some-key').encode(payload) }
+        let(:payload) { {'user_id' => 'larry', 'aud' => ['bosh']} }
+        before { test_config['user_management']['options'] = provider_options }
+
+        it 'creates a UAAIdentityProvider' do
+          expect(config.identity_provider).to be_a(Bosh::Director::Api::UAAIdentityProvider)
+        end
+
+        it 'creates the UAAIdentityProvider with the configured key' do
+          request_env = {'HTTP_AUTHORIZATION' => "bearer #{token}"}
+          expect(config.identity_provider.corroborate_user(request_env)).to eq('larry')
+        end
+      end
     end
   end
 end

@@ -38,45 +38,68 @@ describe 'CentOS OS image', os_image: true do
 
   context 'installed by base_centos_packages' do
     %w(
-      upstart
-      openssl-devel
-      lsof
-      quota
-      rsync
-      strace
-      iptables
-      sysstat
-      tcpdump
-      dhclient
-      zip
-      traceroute
-      gdb
+      bison
+      bzip2-devel
+      cmake
       curl
-      readline-devel
+      dhclient
       flex
-      openssh-server
-      wget
+      gdb
+      glibc-static
+      iptables
+      libcap-devel
+      libuuid-devel
       libxml2
       libxml2-devel
       libxslt
       libxslt-devel
+      lsof
+      nc
+      openssh-server
+      openssl-devel
+      parted
       psmisc
-      unzip
-      bison
-      bzip2-devel
-      libcap-devel
-      cmake
+      quota
+      readline-devel
       rpm-build
       rpmdevtools
-      glibc-static
+      rsync
       runit
+      strace
       sudo
-      libuuid-devel
-      nc
+      sysstat
+      tcpdump
+      traceroute
+      unzip
+      upstart
+      wget
+      zip
     ).each do |pkg|
       describe package(pkg) do
         it { should be_installed }
       end
+    end
+  end
+
+  context 'installed by base_ssh' do
+    subject(:sshd_config) { file('/etc/ssh/sshd_config') }
+
+    it 'disallows CBC ciphers' do
+      ciphers = %w(
+        aes256-ctr
+        aes192-ctr
+        aes128-ctr
+      ).join(',')
+      expect(sshd_config).to contain(/^Ciphers #{ciphers}$/)
+    end
+
+    it 'disallows insecure HMACs' do
+      macs = %w(
+        hmac-sha2-512
+        hmac-sha2-256
+        hmac-ripemd160
+      ).join(',')
+      expect(sshd_config).to contain(/^MACs #{macs}$/)
     end
   end
 
@@ -108,6 +131,14 @@ describe 'CentOS OS image', os_image: true do
       it { should be_file }
       it { should contain 'READAHEAD_COLLECT="no"' }
       it { should contain 'READAHEAD_COLLECT_ON_RPM="no"' }
+    end
+  end
+
+  context 'rsyslog' do
+    describe file('/etc/rsyslog.d/enable-kernel-logging.conf') do
+      # Make sure imklog module is not loaded in rsyslog
+      # to avoid CentOS stemcell pegging CPU on AWS
+      it { should_not be_file } # (do not add $ in front of ModLoad because it will break the serverspec regex match)
     end
   end
 end

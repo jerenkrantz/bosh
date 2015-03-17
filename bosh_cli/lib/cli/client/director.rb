@@ -64,6 +64,12 @@ module Bosh
           end
         end
 
+        def login(username, password)
+          self.user = username
+          self.password = password
+          authenticated?
+        end
+
         def authenticated?
           status = get_status
           # Backward compatibility: older directors return 200
@@ -121,14 +127,12 @@ module Bosh
           get_json('/deployments')
         end
 
-        def list_running_tasks(verbose = 1)
+        def list_errands(deployment_name)
+          get_json("/deployments/#{deployment_name}/errands")
+        end
 
-          if Bosh::Common::Version::BoshVersion.parse(get_version) < Bosh::Common::Version::BoshVersion.parse('0.3.5')
-            get_json('/tasks?state=processing')
-          else
-            get_json('/tasks?state=processing,cancelling,queued' +
-                       "&verbose=#{verbose}")
-          end
+        def list_running_tasks(verbose = 1)
+          get_json("/tasks?state=processing,cancelling,queued&verbose=#{verbose}")
         end
 
         def list_recent_tasks(count = 30, verbose = 1)
@@ -164,13 +168,7 @@ module Bosh
           options                = options.dup
           options[:content_type] = 'application/x-compressed'
 
-          upload_and_track(:post, '/releases', filename, options)
-        end
-
-        def rebase_release(filename, options = {})
-          options                = options.dup
-          options[:content_type] = 'application/x-compressed'
-          upload_and_track(:post, '/releases?rebase=true', filename, options)
+          upload_and_track(:post, releases_path(options), filename, options)
         end
 
         def upload_remote_release(release_location, options = {})
@@ -179,16 +177,7 @@ module Bosh
           options[:payload]      = JSON.generate(payload)
           options[:content_type] = 'application/json'
 
-          request_and_track(:post, '/releases', options)
-        end
-
-        def rebase_remote_release(release_location, options = {})
-          options                = options.dup
-          payload                = { 'location' => release_location }
-          options[:payload]      = JSON.generate(payload)
-          options[:content_type] = 'application/json'
-
-          request_and_track(:post, '/releases?rebase=true', options)
+          request_and_track(:post, releases_path(options), options)
         end
 
         def delete_stemcell(name, version, options = {})
@@ -601,6 +590,13 @@ module Bosh
           @director_name ||= get_status['name']
         end
 
+        def releases_path(options = {})
+          path = '/releases'
+          params = [:rebase, :skip_if_exists].select { |p| options[p] }.map { |p| "#{p}=true" }
+          path << "?#{params.join('&')}" unless params.empty?
+          path
+        end
+
         def request(method, uri, content_type = nil, payload = nil, headers = {}, options = {})
           headers = headers.dup
           headers['Content-Type'] = content_type if content_type
@@ -700,7 +696,15 @@ module Bosh
             :header => headers,
           }, &block)
 
-        rescue URI::Error, SocketError, Errno::ECONNREFUSED, Timeout::Error, HTTPClient::TimeoutError, HTTPClient::KeepAliveDisconnected => e
+        rescue URI::Error,
+               SocketError,
+               Errno::ECONNREFUSED,
+               Errno::ETIMEDOUT,
+               Errno::ECONNRESET,
+               Timeout::Error,
+               HTTPClient::TimeoutError,
+               HTTPClient::KeepAliveDisconnected,
+               OpenSSL::SSL::SSLError => e
           raise DirectorInaccessible, "cannot access director (#{e.message})"
 
         rescue HTTPClient::BadResponseError => e

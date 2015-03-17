@@ -1,31 +1,36 @@
-# Copyright (c) 2009-2012 VMware, Inc.
 require 'bosh/director/api/task_remover'
 
 module Bosh::Director
   module Api
     class TaskHelper
       def create_task(username, type, description)
-        user = Models::User[:username => username]
-        task = Models::Task.create(:user => user,
+        task = Models::Task.create(:username => username,
                                    :type => type,
                                    :description => description,
                                    :state => :queued,
                                    :timestamp => Time.now,
                                    :checkpoint_time => Time.now)
-        log_dir = File.join(Config.base_dir, "tasks", task.id.to_s)
-        task_status_file = File.join(log_dir, "debug")
+        log_dir = File.join(Config.base_dir, 'tasks', task.id.to_s)
+        task_status_file = File.join(log_dir, 'debug')
         FileUtils.mkdir_p(log_dir)
-        logger = MonoLogger.new(task_status_file)
-        logger.level = Config.logger.level
-        logger.info("Director Version : #{Bosh::Director::VERSION}")
-        logger.info("Enqueuing task: #{task.id}")
+
+        File.open(task_status_file, 'a') do |f|
+          f << format_log_message("Director Version: #{Bosh::Director::VERSION}")
+          f << format_log_message("Enqueuing task: #{task.id}")
+        end
 
         # remove old tasks
-        TaskRemover.new(Config.max_tasks, logger).remove
+        TaskRemover.new(Config.max_tasks).remove
 
         task.output = log_dir
         task.save
         task
+      end
+
+      private
+
+      def format_log_message(message)
+        ThreadFormatter.new.call('INFO', Time.now, 'TaskHelper', message)
       end
     end
   end

@@ -5,9 +5,12 @@ require 'bosh/stemcell/aws/region'
 require 'bosh/stemcell/aws/ami'
 
 module Bosh::Stemcell::Aws
+  HVM_VIRTUALIZATION = 'hvm'
+
   class LightStemcell
-    def initialize(stemcell)
+    def initialize(stemcell, virtualization_type)
       @stemcell = stemcell
+      @virtualization_type = virtualization_type
     end
 
     def write_archive
@@ -25,18 +28,24 @@ module Bosh::Stemcell::Aws
     end
 
     def path
-      File.join(File.dirname(stemcell.path), "light-#{File.basename(stemcell.path)}")
+      stemcell_name = File.basename(stemcell.path)
+      stemcell_name = stemcell_name.gsub("xen", "xen-hvm") if virtualization_type == HVM_VIRTUALIZATION
+      File.join(File.dirname(stemcell.path), "light-#{stemcell_name}")
     end
 
     private
 
-    attr_reader :stemcell
+    attr_reader :stemcell, :virtualization_type
 
     def manifest
       region = Region.new
-      ami = Ami.new(stemcell, region)
+      ami = Ami.new(stemcell, region, virtualization_type)
       ami_id = ami.publish
       manifest = Bosh::Common::DeepCopy.copy(stemcell.manifest)
+      if virtualization_type == HVM_VIRTUALIZATION
+        manifest['name'] = manifest['name'].gsub("xen", "xen-hvm")
+        manifest['cloud_properties']['name'] = manifest['cloud_properties']['name'].gsub("xen", "xen-hvm")
+      end
       manifest['cloud_properties']['ami'] = { region.name => ami_id }
       manifest
     end

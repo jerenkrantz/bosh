@@ -60,10 +60,13 @@ snapshots:
   enabled: true
 
 cloud:
-  external_cpi:
-    enabled: <%= external_cpi_enabled || false %>
-    cpi_path: <%= external_cpi_config[:director_path] %>
+  <% if external_cpi_enabled %>
+  provider:
+    name: <%= external_cpi_config[:name] %>
+    path: <%= external_cpi_config[:job_path] %>
+  <% else %>
   plugin: dummy
+  <% end %>
   properties:
     nats: nats://localhost:<%= nats_port %>
     dir: <%= cloud_storage_dir %>
@@ -72,4 +75,8 @@ cloud:
         <<: *director_blobstore
       server:
         host: 127.0.0.1
+        host: 127.0.0.1
         password:
+
+user_management:
+  provider: local

@@ -6,11 +6,10 @@ module VSphereCloud
   describe Client do
     include FakeFS::SpecHelpers
 
-    subject(:client) { Client.new('http://www.example.com', options) }
-
-    let(:options) { {} }
-    let(:fake_search_index) { double }
+    subject(:client) { described_class.new('fake-host', soap_log: 'fake-soap-log') }
     let(:fake_service_content) { double('service content', root_folder: double('fake-root-folder')) }
+
+    let(:fake_search_index) { double(:search_index) }
 
     let(:logger) { instance_double('Logger') }
     before { class_double('Bosh::Clouds::Config', logger: logger).as_stubbed_const }
@@ -22,73 +21,11 @@ module VSphereCloud
     end
 
     describe '#initialize' do
-      let(:ssl_config) { double(:ssl_config, :verify_mode= => nil) }
-      let(:http_client) do
-        instance_double('HTTPClient',
-          :debug_dev= => nil,
-          :send_timeout= => nil,
-          :receive_timeout= => nil,
-          :connect_timeout= => nil,
-          :ssl_config => ssl_config,
-        )
-      end
-      before { allow(HTTPClient).to receive(:new).and_return(http_client) }
-
-      let(:options) { { 'soap_log' => soap_log } }
-
-      def self.it_configures_http_client
-        it 'configures http client ' do
-          expect(http_client).to receive(:send_timeout=).with(14400)
-          expect(http_client).to receive(:receive_timeout=).with(14400)
-          expect(http_client).to receive(:connect_timeout=).with(30)
-          expect(ssl_config).to receive(:verify_mode=).with(OpenSSL::SSL::VERIFY_NONE)
-
-          subject
-        end
-      end
-
-      context 'when soap log is an IO' do
-        let(:soap_log) { IO.new(0) }
-
-        it 'uses given IO for http_client logging' do
-          expect(http_client).to receive(:debug_dev=).with(soap_log)
-          expect(VimSdk::Soap::StubAdapter).to receive(:new).with('http://www.example.com', 'vim.version.version6', http_client)
-
-          subject
-        end
-
-        it_configures_http_client
-      end
-
-      context 'when soap log is a StringIO' do
-        let(:soap_log) { StringIO.new }
-
-        it 'uses given IO for http_client logging' do
-          expect(http_client).to receive(:debug_dev=).with(soap_log)
-          expect(VimSdk::Soap::StubAdapter).to receive(:new).with('http://www.example.com', 'vim.version.version6', http_client)
-
-          subject
-        end
-
-        it_configures_http_client
-      end
-
-      context 'when soap log is a file path' do
-        let(:soap_log) { '/fake-log-file' }
-        before { FileUtils.touch('/fake-log-file') }
-
-        it 'creates a file IO for http_client logging' do
-          expect(http_client).to receive(:debug_dev=) do |log_file|
-            expect(log_file).to be_instance_of(File)
-            expect(log_file.path).to eq('/fake-log-file')
-          end
-
-          expect(VimSdk::Soap::StubAdapter).to receive(:new).with('http://www.example.com', 'vim.version.version6', http_client)
-
-          subject
-        end
-
-        it_configures_http_client
+      it 'creates soap stub' do
+        stub_adapter = instance_double('VimSdk::Soap::StubAdapter')
+        soap_stub = instance_double('VSphereCloud::SoapStub', create: stub_adapter)
+        expect(SoapStub).to receive(:new).with('fake-host', 'fake-soap-log').and_return(soap_stub)
+        expect(client.soap_stub).to eq(stub_adapter)
       end
     end
 
@@ -130,12 +67,6 @@ module VSphereCloud
           expect(fake_search_index).to receive(:find_by_inventory_path).with('foo/bar/baz/jaz')
           client.find_by_inventory_path(['foo', ['bar', 'baz/jaz']])
         end
-      end
-    end
-
-    describe '#soap_stub' do
-      it 'returns the soap stub adapter' do
-        expect(client.soap_stub).to be_a(VimSdk::Soap::StubAdapter)
       end
     end
 
@@ -222,6 +153,86 @@ module VSphereCloud
       end
     end
 
+    describe '#delete_disk' do
+      let(:datacenter) { instance_double('VimSdk::Vim::Datacenter') }
+      let(:vmdk_task) { instance_double('VimSdk::Vim::Task') }
+      let(:flat_vmdk_task) { instance_double('VimSdk::Vim::Task') }
+      let(:file_manager) { instance_double('VimSdk::Vim::FileManager') }
+
+      before do
+        allow(fake_service_content).to receive(:file_manager).and_return(file_manager)
+      end
+
+      context 'when the disk exists' do
+        it 'calls delete_file on file manager for each vmdk' do
+          expect(client).to receive(:wait_for_task).with(vmdk_task)
+          expect(client).to receive(:wait_for_task).with(flat_vmdk_task)
+
+          expect(file_manager).to receive(:delete_file).
+            with('[some-datastore] some/path.vmdk', datacenter).
+            and_return(vmdk_task)
+          expect(file_manager).to receive(:delete_file).
+            with('[some-datastore] some/path-flat.vmdk', datacenter).
+            and_return(flat_vmdk_task)
+
+          client.delete_disk(datacenter, '[some-datastore] some/path')
+        end
+      end
+
+      context 'when file manager raises "File not found" error for the .vmdk' do
+        it 'does not raise error' do
+          expect(client).to receive(:wait_for_task).with(vmdk_task).
+            and_raise(RuntimeError.new('File [some-datastore] some/path.vmdk was not found'))
+          expect(client).to receive(:wait_for_task).with(flat_vmdk_task)
+
+          expect(file_manager).to receive(:delete_file).
+            with('[some-datastore] some/path.vmdk', datacenter).
+            and_return(vmdk_task)
+          expect(file_manager).to receive(:delete_file).
+            with('[some-datastore] some/path-flat.vmdk', datacenter).
+            and_return(flat_vmdk_task)
+
+          expect {
+            client.delete_disk(datacenter, '[some-datastore] some/path')
+          }.to_not raise_error
+        end
+      end
+
+      context 'when file manager raises "File not found" error for the -flat.vmdk' do
+        it 'does not raise error' do
+          expect(client).to receive(:wait_for_task).with(vmdk_task)
+          expect(client).to receive(:wait_for_task).with(flat_vmdk_task).
+            and_raise(RuntimeError.new('File [some-datastore] some/path-flat.vmdk was not found'))
+
+          expect(file_manager).to receive(:delete_file).
+            with('[some-datastore] some/path.vmdk', datacenter).
+            and_return(vmdk_task)
+          expect(file_manager).to receive(:delete_file).
+            with('[some-datastore] some/path-flat.vmdk', datacenter).
+            and_return(flat_vmdk_task)
+
+          expect {
+            client.delete_disk(datacenter, '[some-datastore] some/path')
+          }.to_not raise_error
+        end
+      end
+
+      context 'when file manager raises other error' do
+        it 'raises that error' do
+          error = RuntimeError.new('Invalid datastore path some/path.vmdk')
+          expect(client).to receive(:wait_for_task).with(vmdk_task).
+            and_raise(error)
+          expect(file_manager).to receive(:delete_file).
+            with('some/path.vmdk', datacenter).
+            and_return(vmdk_task)
+
+          expect {
+            client.delete_disk(datacenter, 'some/path.vmdk')
+          }.to raise_error
+        end
+      end
+    end
+
     describe '#delete_folder' do
       let(:folder) { instance_double('VimSdk::Vim::Folder') }
 
@@ -231,6 +242,17 @@ module VSphereCloud
         expect(folder).to receive(:destroy).and_return(task)
         expect(client).to receive(:wait_for_task).with(task)
         client.delete_folder(folder)
+      end
+    end
+
+    describe '#create_datastore_folder' do
+      let(:datacenter) { instance_double('VimSdk::Vim::Datacenter') }
+      let(:file_manager) { instance_double('VimSdk::Vim::FileManager') }
+      before { allow(fake_service_content).to receive(:file_manager).and_return(file_manager) }
+
+      it 'creates a folder in datastore' do
+        expect(file_manager).to receive(:make_directory).with('[fake-datastore-name] fake-folder-name', datacenter, true)
+        client.create_datastore_folder('[fake-datastore-name] fake-folder-name', datacenter)
       end
     end
   end

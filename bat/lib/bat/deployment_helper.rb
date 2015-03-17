@@ -20,6 +20,8 @@ module Bat
       @spec['properties']['batlight'] ||= {}
       @spec['properties']['batlight']['missing'] = 'nope'
       @spec['properties']['dns'] = [@env.dns_host]
+      # dup the job_network so test-local mutations don't affect other tests
+      @spec['properties']['job_networks'] = [@spec['properties']['networks'].first.dup]
     end
 
     # if with_deployment() is called without a block, it is up to the caller to
@@ -32,16 +34,16 @@ module Bat
       if !block_given?
         return deployment
       elsif block.arity == 0
-        @bosh_runner.bosh("deployment #{deployment.to_path}").should succeed
-        @bosh_runner.bosh('deploy').should succeed
+        expect(@bosh_runner.bosh("deployment #{deployment.to_path}")).to succeed
+        expect(@bosh_runner.bosh('deploy')).to succeed
         deployed = true
         yield
       elsif block.arity == 1
         yield deployment
       elsif block.arity == 2
-        @bosh_runner.bosh("deployment #{deployment.to_path}").should succeed
+        expect(@bosh_runner.bosh("deployment #{deployment.to_path}")).to succeed
         result = @bosh_runner.bosh('deploy')
-        result.should succeed
+        expect(result).to succeed
         deployed = true
         yield deployment, result
       else
@@ -51,7 +53,7 @@ module Bat
       if block_given?
         deployment.delete if deployment
         if deployed
-          @bosh_runner.bosh("delete deployment #{deployment.name}").should succeed
+          expect(@bosh_runner.bosh("delete deployment #{deployment.name}")).to succeed
         end
       end
     end
@@ -71,10 +73,11 @@ module Bat
 
     def use_job(job)
       @spec['properties']['job'] = job
+      @spec['properties']['templates'] = [job]
     end
 
     def use_templates(templates)
-      @spec['properties']['template'] = templates.map { |item| "\n      - #{item}" }.join
+      @spec['properties']['templates'] = Array(templates)
     end
 
     def use_job_instances(count)
@@ -105,13 +108,11 @@ module Bat
     def public_ip
       # For AWS and OpenStack, the elastic IP is the public IP
       # For vSphere and vCloud, the static_ip is the public IP
-      @spec['properties']['vip'] || @spec['properties']['deployment_static_ip']
+      @spec['properties']['vip'] || static_ip
     end
 
     def use_static_ip
       @spec['properties']['use_static_ip'] = true
-      @spec['properties']['deployment_static_ip'] = static_ip
-      @spec['properties']['mbus'] = mbus_url(static_ip)
     end
 
     def no_static_ip
@@ -119,17 +120,35 @@ module Bat
     end
 
     def static_ip
-      @spec['properties']['static_ip']
+      static_ips.first
+    end
+
+    def static_ips
+      @spec['properties']['job_networks'].inject([]) do |memo, network|
+        if network['type'] == 'manual'
+          memo << network['static_ip']
+        end
+        memo
+      end
     end
 
     def use_second_static_ip
       @spec['properties']['use_static_ip'] = true
-      @spec['properties']['deployment_static_ip'] = second_static_ip
-      @spec['properties']['mbus'] = mbus_url(second_static_ip)
+      @spec['properties']['job_networks'][0]['static_ip'] = second_static_ip
     end
 
     def second_static_ip
       @spec['properties']['second_static_ip']
+    end
+
+    def use_multiple_manual_networks
+      @spec['properties']['job_networks'] = []
+      @spec['properties']['networks'].each do |network|
+        if network['type'] == 'manual'
+          # dup the job_networks so test-local mutations don't affect other tests
+          @spec['properties']['job_networks'] << network.dup
+        end
+      end
     end
 
     def use_persistent_disk(size)
@@ -152,6 +171,10 @@ module Bat
       @spec['properties']['batlight']['fail'] = 'control'
     end
 
+    def use_flavor_with_no_ephemeral_disk
+      @spec['properties']['instance_type'] = @spec['properties']['flavor_with_no_ephemeral_disk']
+    end
+
     def dynamic_network?
       network_type == 'dynamic'
     end
@@ -169,7 +192,7 @@ module Bat
 
     def events(task_id)
       result = @bosh_runner.bosh("task #{task_id} --raw")
-      result.should succeed_with /Task \d+ \w+/
+      expect(result).to succeed_with /Task \d+ \w+/
 
       event_list = []
       result.output.split("\n").each do |line|
@@ -191,10 +214,6 @@ module Bat
     end
 
     private
-
-    def mbus_url(ip)
-      "nats://nats:0b450ada9f830085e2cdeff6@#{ip}:4222"
-    end
 
     def spec
       @spec ||= {}

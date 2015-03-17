@@ -1,11 +1,13 @@
 require 'bosh/dev/aws'
 require 'bosh/dev/deployments_repository'
+require 'logging'
 
 module Bosh::Dev::Aws
   class Receipts
     def initialize(env)
       @env = env
-      @deployments_repository = Bosh::Dev::DeploymentsRepository.new(env)
+      logger = Logging.logger(STDERR)
+      @deployments_repository = Bosh::Dev::DeploymentsRepository.new(env, logger)
     end
 
     def vpc_outfile_path

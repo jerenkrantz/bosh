@@ -24,9 +24,6 @@ module Bosh::Cli::Command
           if release_file.nil?
             err('The information about latest generated release is missing, please provide release filename')
           end
-          unless confirmed?("Upload release `#{File.basename(release_file).make_green}' to `#{target_name.make_green}'")
-            err('Canceled upload')
-          end
         end
 
         if release_file =~ /^#{URI::regexp}$/
@@ -56,7 +53,7 @@ module Bosh::Cli::Command
         blobstore = release.blobstore
         tmpdir = Dir.mktmpdir
 
-        compiler = Bosh::Cli::ReleaseCompiler.new(manifest_path, blobstore, package_matches)
+        compiler = Bosh::Cli::ReleaseCompiler.new(manifest_path, cache_dir, blobstore, package_matches)
         need_repack = true
 
         unless compiler.exists?
@@ -131,26 +128,31 @@ module Bosh::Cli::Command
 
         if rebase
           say("Uploading release (#{'will be rebased'.make_yellow})")
-          status, task_id = director.rebase_release(tarball_path)
-          task_report(status, task_id, 'Release rebased')
+          report = 'Release rebased'
         else
           say("\nUploading release\n")
-          status, task_id = director.upload_release(tarball_path)
-          task_report(status, task_id, 'Release uploaded')
+          report = 'Release uploaded'
         end
+        status, task_id = director.upload_release(tarball_path, rebase: rebase)
+        task_report(status, task_id, report)
       end
 
       def upload_remote_release(release_location, upload_options = {})
         nl
         if upload_options[:rebase]
           say("Using remote release `#{release_location}' (#{'will be rebased'.make_yellow})")
-          status, task_id = director.rebase_remote_release(release_location)
-          task_report(status, task_id, 'Release rebased')
+          report = 'Release rebased'
         else
           say("Using remote release `#{release_location}'")
-          status, task_id = director.upload_remote_release(release_location)
-          task_report(status, task_id, 'Release uploaded')
+          report = 'Release uploaded'
         end
+
+        status, task_id = director.upload_remote_release(
+          release_location,
+          rebase: upload_options[:rebase],
+          skip_if_exists: upload_options[:skip_if_exists],
+        )
+        task_report(status, task_id, report)
       end
 
       # if we aren't already in a release directory, try going up two levels
@@ -160,7 +162,7 @@ module Bosh::Cli::Command
           dir = File.expand_path('../..', manifest_path)
           Dir.chdir(dir)
           if in_release_dir?
-            @release = Bosh::Cli::Release.new(dir)
+            @release = Bosh::Cli::Release.new(dir, options[:final])
           end
         end
 

@@ -1,54 +1,48 @@
 module VSphereCloud
-
   class Resources
-
     class Folder
-      attr_reader :mob
-      attr_reader :name
+      attr_reader :mob, :path, :path_components
 
-      def initialize(name, config)
-        @name = name
+      def initialize(path, config)
+        @path = path
         @config = config
 
-        find_or_create_folder
+        @path_components = path.split('/')
+
+        @mob = find_or_create_folder(@path_components)
       end
 
       private
 
-      def find_or_create_folder
-        folder = find_folder
+      def find_or_create_folder(path_components)
+        return root_vm_folder if path_components.empty?
 
-        if @config.datacenter_use_sub_folder
-          @name, @mob = find_or_create_sub_folder(folder)
-        else
-          @mob = folder
+        folder = find_folder(path_components)
+        if folder.nil?
+          last_component = path_components.last
+          parent_folder = find_or_create_folder(path_components[0..-2])
+
+          begin
+            @config.logger.debug("Creating folder #{last_component}")
+            folder = parent_folder.create_folder(last_component)
+          rescue VimSdk::SoapError => e
+            raise e unless VimSdk::Vim::Fault::DuplicateName === e.fault
+
+            @config.logger.debug("Folder already exists #{last_component}")
+            folder = find_folder(path_components)
+          end
         end
-      end
 
-      def find_folder
-        folder = @config.client.find_by_inventory_path([@config.datacenter_name, 'vm', @name])
-        raise "Missing folder: #{@name}" if folder.nil?
         folder
       end
 
-      def find_or_create_sub_folder(folder)
-        parent_folder = folder
-        uuid = Bosh::Clouds::Config.uuid
-
-        sub_folder_name = [@name, uuid]
-        name_join = sub_folder_name.join("/")
-
-        @config.logger.debug("Search for folder #{name_join}")
-        sub_folder = @config.client.find_by_inventory_path([@config.datacenter_name, 'vm', sub_folder_name])
-        if sub_folder.nil?
-          @config.logger.debug("Creating folder #{name_join}")
-          sub_folder = parent_folder.create_folder(uuid)
-        end
-        @config.logger.debug("Found folder #{name_join}: #{sub_folder}")
-
-        [sub_folder_name, sub_folder]
+      def find_folder(path_components)
+        @config.client.find_by_inventory_path([@config.datacenter_name, 'vm', path_components].flatten)
       end
 
+      def root_vm_folder
+        @config.client.find_by_inventory_path([@config.datacenter_name, 'vm'])
+      end
     end
   end
 end

@@ -1,6 +1,6 @@
 AllCops:
   Include:
-    - Gemfile
+    - "**/Gemfile"
     - Rakefile
   Exclude:
     - agent_client/docs/**/*
@@ -13,7 +13,6 @@ AllCops:
     - bosh_openstack_cpi/**/*
     - bosh-registry/**/*
     - bosh_vsphere_cpi/**/*
-    - bosh_warden_cpi/**/*
     - bosh-monitor/**/*
     - bosh-release/**/*
     - bosh-stemcell/spec/stemcells/centos_spec.rb
@@ -23,6 +22,7 @@ AllCops:
     - stemcell_builder/**/*
     - vendor/**/*
     - tmp/**/*
+    - go/**/*
 
 CollectionMethods:
   Enabled: false # Enabling this doesn't like "inject"

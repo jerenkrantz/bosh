@@ -1,6 +1,7 @@
 require 'timeout'
 require 'bosh/dev'
 require 'securerandom'
+require 'thread'
 
 module Bosh::Dev::Sandbox
   class Service
@@ -14,96 +15,98 @@ module Bosh::Dev::Sandbox
 
       # Add unique identifier to avoid confusing log information
       @description = "#{@cmd_array.first} (#{SecureRandom.hex(4)})"
-
-      @stdout = @cmd_options[:output]
-      @stderr = "#{@stdout}.err" if @stdout
     end
 
     def start
       env = ENV.to_hash.merge(@cmd_options.fetch(:env, {}))
 
-      if running?
+      if running?(@pid)
         @logger.info("Already started #{@description} with PID #{@pid}")
       else
         unless system("which #{@cmd_array.first} > /dev/null")
           raise "Cannot find #{@description} in the $PATH"
         end
 
+        @log_id = SecureRandom.hex(4)
+
         @pid = Process.spawn(env, *@cmd_array, {
-          out: @stdout || :close,
-          err: @stderr || :close,
+          out: stdout || :close,
+          err: stderr || :close,
           in: :close,
         })
-        @logger.info("Started #{@description} with PID #{@pid}")
 
-        Process.detach(@pid)
-
-        tries = 0
-        until running?
-          tries += 1
-          raise RuntimeError, "Cannot run #{@cmd_array} with #{env.inspect}" if tries > 20
-          sleep(0.1)
-        end
+        @logger.info("Started #{@description} with PID #{@pid}, log-id: #{@log_id}")
       end
     end
 
     def stop(signal = 'TERM')
-      if running?
-        kill_process(signal, @pid)
+      pid_to_stop = @pid
+      @pid = nil
+
+      if running?(pid_to_stop)
+        kill_process(signal, pid_to_stop)
 
         # Block until process exits to avoid race conditions in the caller
         # (e.g. director process is killed but we don't wait and then we
         # try to delete db which is in use by director)
-        wait_for_process_to_exit_or_be_killed
+        wait_for_process_to_exit_or_be_killed(pid_to_stop)
+      else
+        @logger.debug("Process #{@description} with PID=#{pid_to_stop} is not running.")
       end
-
-      # Reset pid so that we do not think that service is still running
-      # when pid is given to some other unrelated process
-      @pid = nil
-    end
-
-    def running?
-      @pid && Process.kill(0, @pid)
-    rescue Errno::ESRCH # No such process
-      false
-    rescue Errno::EPERM # Owned by some other user/process
-      @logger.info("Process other than #{@description} is running with PID=#{@pid} so this service is not running.")
-      @logger.debug(`ps #{@pid}`)
-      false
     end
 
     def stdout_contents
-      @stdout ? File.read(@stdout) : ''
+      stdout ? File.read(stdout) : ''
     end
 
     def stderr_contents
-      @stderr ? File.read(@stderr) : ''
+      stderr ? File.read(stderr) : ''
     end
 
     private
 
-    def wait_for_process_to_exit_or_be_killed(remaining_attempts = 60)
-      while running?
-        remaining_attempts -= 1
-        if remaining_attempts == 35
-          @logger.info("Killing #{@description} with PID=#{@pid}")
-          kill_process('KILL', @pid)
-        elsif remaining_attempts == 0
-          raise "KILL signal ignored by #{@description} with PID=#{@pid}"
-        end
+    def running?(pid)
+      pid && Process.kill(0, pid)
+    rescue Errno::ESRCH # No such process
+      false
+    rescue Errno::EPERM # Owned by some other user/process
+      @logger.info("Process other than #{@description} is running with PID=#{pid} so this service is not running.")
+      @logger.debug(`ps #{pid}`)
+      false
+    end
 
-        sleep(0.2)
+    def wait_for_process_to_exit_or_be_killed(pid)
+      Timeout::timeout(20) do
+        Process.wait(pid)
       end
+    rescue Timeout::Error => e
+      raise "KILL signal ignored by #{@description} with PID=#{pid}"
     end
 
     def kill_process(signal, pid)
-      @logger.info("Terminating #{@description} with PID=#{pid}")
+      @logger.info("Killing #{@description} (pid: #{pid}) with SIG#{signal}.")
       Process.kill(signal, pid)
     rescue Errno::ESRCH # No such process
       @logger.info("Process #{@description} with PID=#{pid} not found")
     rescue Errno::EPERM # Owned by some other user/process
       @logger.info("Process other than #{@description} is running with PID=#{pid} so this service is stopped.")
       @logger.debug(`ps #{pid}`)
+    end
+
+    def stdout
+      if @cmd_options[:output]
+        "#{@cmd_options[:output]}-#{@log_id}"
+      else
+        @cmd_options[:stdout]
+      end
+    end
+
+    def stderr
+      if @cmd_options[:output]
+        "#{@cmd_options[:output]}-#{@log_id}.err"
+      else
+        @cmd_options[:stderr]
+      end
     end
   end
 end

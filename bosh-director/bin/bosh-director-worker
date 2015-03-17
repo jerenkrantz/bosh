@@ -51,10 +51,7 @@ end
 
 Bosh::Director::App.new(config)
 
-resque_logging = config.hash.fetch('resque', {}).fetch('logging', {})
-resque_logger_level = resque_logging.fetch('level', 'info').upcase
-Resque.logger = MonoLogger.new(resque_logging.fetch('file', STDOUT))
-Resque.logger.level = MonoLogger.const_get(resque_logger_level)
+Resque.logger = config.resque_logger
 
 worker = nil
 queues = (ENV['QUEUES'] || ENV['QUEUE']).to_s.split(',')
@@ -67,7 +64,7 @@ rescue Resque::NoQueueError
 end
 
 Resque.after_fork do
-  EM.error_handler { |e| puts "Error raised during event loop: #{e.message}" }
+  EM.error_handler { |e| puts "Error raised during event loop: #{e.inspect}, backtrace: #{e.backtrace}" }
   Thread.new { EM.run }
 end
 

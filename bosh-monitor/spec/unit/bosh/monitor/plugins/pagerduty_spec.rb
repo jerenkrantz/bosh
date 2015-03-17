@@ -2,9 +2,7 @@ require 'spec_helper'
 
 describe Bhm::Plugins::Pagerduty do
 
-  before :each do
-    Bhm.logger = Logging.logger(StringIO.new)
-
+  before do
     @options = {
       "service_key" => "zbzb",
       "http_proxy"  => "http://nowhere.com:3128"
@@ -23,12 +21,12 @@ describe Bhm::Plugins::Pagerduty do
       "http_proxy"  => "http://nowhere.com:3128"
     }
 
-    Bhm::Plugins::Pagerduty.new(valid_options).validate_options.should be(true)
-    Bhm::Plugins::Pagerduty.new(invalid_options).validate_options.should be(false)
+    expect(Bhm::Plugins::Pagerduty.new(valid_options).validate_options).to be(true)
+    expect(Bhm::Plugins::Pagerduty.new(invalid_options).validate_options).to be(false)
   end
 
   it "doesn't start if event loop isn't running" do
-    @plugin.run.should be(false)
+    expect(@plugin.run).to be(false)
   end
 
   it "sends events to Pagerduty" do
@@ -62,8 +60,8 @@ describe Bhm::Plugins::Pagerduty do
     EM.run do
       @plugin.run
 
-      @plugin.should_receive(:send_http_post_request).with(uri, alert_request)
-      @plugin.should_receive(:send_http_post_request).with(uri, heartbeat_request)
+      expect(@plugin).to receive(:send_http_post_request).with(uri, alert_request)
+      expect(@plugin).to receive(:send_http_post_request).with(uri, heartbeat_request)
 
       @plugin.process(alert)
       @plugin.process(heartbeat)

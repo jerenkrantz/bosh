@@ -19,13 +19,16 @@ module Bosh::Dev::Openstack
         env.merge!(
           'BOSH_OPENSTACK_VIP_DIRECTOR_IP' => 'vip',
           'BOSH_OPENSTACK_MANUAL_IP' => 'ip',
-          'BOSH_OPENSTACK_NET_ID' => 'net_id',
+          'BOSH_OPENSTACK_MICRO_NET_ID' => 'net_id',
           'BOSH_OPENSTACK_AUTH_URL' => 'auth_url',
           'BOSH_OPENSTACK_USERNAME' => 'username',
           'BOSH_OPENSTACK_API_KEY' => 'api_key',
           'BOSH_OPENSTACK_TENANT' => 'tenant',
           'BOSH_OPENSTACK_REGION' => 'region',
           'BOSH_OPENSTACK_PRIVATE_KEY' => 'private_key_path',
+          'BOSH_OPENSTACK_DEFAULT_KEY_NAME' => 'key_name',
+          'BOSH_OPENSTACK_FLAVOR' => 'flavor',
+          'BOSH_OPENSTACK_DEFAULT_SECURITY_GROUP' => 'security_group',
         )
       end
 
@@ -48,7 +51,7 @@ network:
 resources:
   persistent_disk: 4096
   cloud_properties:
-    instance_type: m1.small
+    instance_type: flavor
 
 cloud:
   plugin: openstack
@@ -60,9 +63,9 @@ cloud:
       tenant: tenant
       region: region
       endpoint_type: publicURL
-      default_key_name: jenkins
+      default_key_name: key_name
       default_security_groups:
-      - default
+      - security_group
       private_key: private_key_path
       state_timeout: 300
       wait_resource_poll_interval: 5
@@ -106,7 +109,7 @@ network:
 resources:
   persistent_disk: 4096
   cloud_properties:
-    instance_type: m1.small
+    instance_type: flavor
 cloud:
   plugin: openstack
   properties:
@@ -117,9 +120,9 @@ cloud:
       tenant: tenant
       region: region
       endpoint_type: publicURL
-      default_key_name: jenkins
+      default_key_name: key_name
       default_security_groups:
-      - default
+      - security_group
       private_key: private_key_path
       state_timeout: 300
       wait_resource_poll_interval: 5
@@ -162,7 +165,7 @@ YAML
 
       context 'when BOSH_OPENSTACK_STATE_TIMEOUT is not specified' do
         it 'uses 300 (number) as a state_timeout' do
-          env.merge!('BOSH_OPENSTACK_STATE_TIMEOUT' => nil)
+          env.delete('BOSH_OPENSTACK_STATE_TIMEOUT')
           expect(subject.to_h['cloud']['properties']['openstack']['state_timeout']).to eq(300)
         end
       end
@@ -184,9 +187,36 @@ YAML
 
       context 'when BOSH_OPENSTACK_CONNECTION_TIMEOUT is not specified' do
         it 'uses 60 (number) as a connect_timeout' do
-
-          env.merge!('BOSH_OPENSTACK_CONNECTION_TIMEOUT' => nil)
+          env.delete('BOSH_OPENSTACK_CONNECTION_TIMEOUT')
           expect(subject.to_h['cloud']['properties']['openstack']['connection_options']['connect_timeout']).to eq(60)
+        end
+      end
+
+      context 'when BOSH_OPENSTACK_DEFAULT_KEY_NAME is an empty string' do
+        it 'uses jenkins as a default key name' do
+          env.merge!('BOSH_OPENSTACK_DEFAULT_KEY_NAME' => '')
+          expect(subject.to_h['cloud']['properties']['openstack']['default_key_name']).to eq('jenkins')
+        end
+      end
+
+      context 'when BOSH_OPENSTACK_DEFAULT_KEY_NAME is not specified' do
+        it 'uses jenkins as a default key name' do
+          env.delete('BOSH_OPENSTACK_DEFAULT_KEY_NAME')
+          expect(subject.to_h['cloud']['properties']['openstack']['default_key_name']).to eq('jenkins')
+        end
+      end
+
+      context 'when BOSH_OPENSTACK_FLAVOR is not specified' do
+        it 'uses m1.small as a default flavor' do
+          env.delete('BOSH_OPENSTACK_FLAVOR')
+          expect(subject.to_h['resources']['cloud_properties']['instance_type']).to eq('m1.small')
+        end
+      end
+
+      context 'when BOSH_OPENSTACK_SECURITY_GROUP is not specified' do
+        it 'uses default as the default security groups' do
+          env.delete('BOSH_OPENSTACK_DEFAULT_SECURITY_GROUP')
+          expect(subject.to_h['cloud']['properties']['openstack']['default_security_groups']).to eq(['default'])
         end
       end
     end
@@ -202,6 +232,7 @@ YAML
           'BOSH_OPENSTACK_TENANT' => 'fake-tenant',
           'BOSH_OPENSTACK_REGION' => 'fake-region',
           'BOSH_OPENSTACK_PRIVATE_KEY' => 'fake-private-key-path',
+          'BOSH_OPENSTACK_DEFAULT_KEY_NAME' => 'key_name',
         )
       end
 
@@ -214,7 +245,7 @@ YAML
             'tenant' => 'fake-tenant',
             'region' => 'fake-region',
             'endpoint_type' => 'publicURL',
-            'default_key_name' => 'jenkins',
+            'default_key_name' => 'key_name',
             'default_security_groups' => ['default'],
             'private_key' => 'fake-private-key-path',
             'state_timeout' => 300,

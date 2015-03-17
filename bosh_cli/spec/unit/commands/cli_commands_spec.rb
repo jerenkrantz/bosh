@@ -3,156 +3,178 @@
 require 'spec_helper'
 
 describe Bosh::Cli::Command::Base do
+  let(:config_file) { File.join(tmpdir, 'bosh_config') }
+  let(:options) { {:config => config_file } }
+  let(:tmpdir) { Dir.mktmpdir }
 
   before :each do
-    tmpdir = Dir.mktmpdir
-    @config = File.join(tmpdir, 'bosh_config')
+    @config = config_file
     @director = double(Bosh::Cli::Client::Director)
-    Bosh::Cli::Client::Director.stub(:new).and_return(@director)
-    @director.stub(:get_status).and_return('name' => 'ZB')
+    allow(Bosh::Cli::Client::Director).to receive(:new).and_return(@director)
+    allow(@director).to receive(:get_status).and_return('name' => 'ZB')
+  end
+
+  def misc_cmd
+    cmd = Bosh::Cli::Command::Misc.new
+    options.each { |k, v| cmd.add_option(k, v) }
+    cmd
+  end
+
+  def login_cmd
+    cmd = Bosh::Cli::Command::Login.new
+    options.each { |k, v| cmd.add_option(k, v) }
+    cmd
   end
 
   describe Bosh::Cli::Command::Misc do
+    context 'in non_interactive mode' do
+      before(:each) { options[:non_interactive] = true }
 
-    before :each do
-      @cmd = Bosh::Cli::Command::Misc.new
-      @cmd.add_option(:config, @config)
-      @cmd.add_option(:non_interactive, true)
+      it 'uses NonInteractiveProgressRenderer' do
+        expect(misc_cmd.progress_renderer).to be_a(Bosh::Cli::NonInteractiveProgressRenderer)
+      end
+
+      it 'sets the target' do
+        expect(misc_cmd.target).to be_nil
+        misc_cmd.set_target('http://example.com:232')
+        expect(misc_cmd.target).to eq('http://example.com:232')
+      end
+
+      it 'normalizes target' do
+        expect(misc_cmd.target).to be_nil
+        misc_cmd.set_target('test')
+        expect(misc_cmd.target).to eq('https://test:25555')
+      end
+
+      it 'handles director errors when setting target' do
+        expect(@director).to receive(:get_status).and_raise(Bosh::Cli::DirectorError)
+
+        expect {
+          misc_cmd.set_target('test')
+        }.to raise_error(Bosh::Cli::CliError, /cannot talk to director/i)
+
+        expect(misc_cmd.target).to be_nil
+      end
+
+      it 'sets target' do
+        misc_cmd.set_target('test')
+        expect(misc_cmd.target).to eq('https://test:25555')
+      end
+
+      it 'supports named targets' do
+        misc_cmd.set_target('test', 'mytarget')
+        expect(misc_cmd.target).to eq('https://test:25555')
+
+        misc_cmd.set_target('mytarget')
+        expect(misc_cmd.target).to eq('https://test:25555')
+
+        misc_cmd.set_target('foo', 'myfoo')
+        expect(misc_cmd.target).to eq('https://foo:25555')
+
+        misc_cmd.set_target('myfoo')
+        expect(misc_cmd.target).to eq('https://foo:25555')
+      end
     end
 
-    it 'sets the target' do
-      @cmd.target.should be_nil
-      @cmd.set_target('http://example.com:232')
-      @cmd.target.should == 'http://example.com:232'
+    context 'in interactive mode' do
+      before :each do
+        misc_cmd.add_option(:non_interactive, false)
+      end
+
+      it 'uses InteractiveProgressRenderer' do
+        misc_cmd.add_option(:non_interactive, false)
+        expect(misc_cmd.progress_renderer).to be_a(Bosh::Cli::InteractiveProgressRenderer)
+      end
     end
+  end
 
-    it 'normalizes target' do
-      @cmd.target.should be_nil
-      @cmd.set_target('test')
-      @cmd.target.should == 'https://test:25555'
-    end
+  describe Bosh::Cli::Command::Login do
+    context 'in non_interactive mode' do
+      before(:each) { options[:non_interactive] = true }
 
-    it 'handles director errors when setting target' do
-      @director.should_receive(:get_status).and_raise(Bosh::Cli::DirectorError)
+      it 'logs user in' do
+        expect(@director).to receive(:login).with('user', 'pass') { true }
+        misc_cmd.set_target('test')
+        login_cmd.login('user', 'pass')
+        expect(misc_cmd.logged_in?).to be(true)
+        expect(misc_cmd.username).to eq('user')
+        expect(misc_cmd.password).to eq('pass')
+      end
 
-      lambda {
-        @cmd.set_target('test')
-      }.should raise_error(Bosh::Cli::CliError, /cannot talk to director/i)
+      it 'saves strings, not HighLine::String objects in the config' do
+        expect(@director).to receive(:login).with('user', 'pass') { true }
+        misc_cmd.set_target('test')
+        login_cmd.login(HighLine::String.new('user'), HighLine::String.new('pass'))
+        expect(misc_cmd.logged_in?).to be(true)
+        expect(misc_cmd.username).to eq('user')
+        expect(misc_cmd.password).to eq('pass')
+        config_file = File.read(File.expand_path(@config))
+        expect(config_file).not_to match /HighLine::String/
+        expect(config_file).to include('username: user')
+        expect(config_file).to include('password: pass')
+      end
 
-      @cmd.target.should be_nil
-    end
+      it 'logs user out' do
+        misc_cmd.set_target('test')
+        expect(@director).to receive(:login).with('user', 'pass') { true }
+        login_cmd.login('user', 'pass')
+        login_cmd.logout
+        expect(misc_cmd.logged_in?).to be(false)
+      end
 
-    it 'sets target' do
-      @cmd.set_target('test')
-      @cmd.target.should == 'https://test:25555'
-    end
-
-    it 'supports named targets' do
-      @cmd.set_target('test', 'mytarget')
-      @cmd.target.should == 'https://test:25555'
-
-      @cmd.set_target('foo', 'myfoo')
-
-      @cmd.set_target('mytarget')
-      @cmd.target.should == 'https://test:25555'
-
-      @cmd.set_target('myfoo')
-      @cmd.target.should == 'https://foo:25555'
-    end
-
-    it 'logs user in' do
-      @director.should_receive(:authenticated?).and_return(true)
-      @director.should_receive(:user=).with('user')
-      @director.should_receive(:password=).with('pass')
-      @cmd.set_target('test')
-      @cmd.login('user', 'pass')
-      @cmd.logged_in?.should be(true)
-      @cmd.username.should == 'user'
-      @cmd.password.should == 'pass'
-    end
-
-    it 'logs user in with highline' do
-      @director.should_receive(:authenticated?).and_return(true)
-      @director.should_receive(:user=).with('user')
-      @director.should_receive(:password=).with('pass')
-      @cmd.set_target('test')
-      @cmd.login(HighLine::String.new('user'), HighLine::String.new('pass'))
-      @cmd.logged_in?.should be(true)
-      @cmd.username.should == 'user'
-      @cmd.password.should == 'pass'
-      config_file = File.read(File.expand_path(@config))
-      config_file.should_not match /HighLine::String/
-      config_file.should include('username: user')
-      config_file.should include('password: pass')
-    end
-
-    it 'logs user out' do
-      @cmd.set_target('test')
-      @director.should_receive(:authenticated?).and_return(true)
-      @director.should_receive(:user=).with('user')
-      @director.should_receive(:password=).with('pass')
-      @cmd.login('user', 'pass')
-      @cmd.logout
-      @cmd.logged_in?.should be(false)
-    end
-
-    it 'respects director checks option when logging in' do
-      @director.stub(:get_status).
-          and_return({'user' => 'user', 'name' => 'ZB'})
-      @director.stub(:authenticated?).and_return(true)
-
-      @cmd.set_target('test')
-      @director.should_receive(:user=).with('user')
-      @director.should_receive(:password=).with('pass')
-      @cmd.login('user', 'pass')
-      @cmd.logged_in?.should be(true)
-      @cmd.username.should == 'user'
-      @cmd.password.should == 'pass'
+      it 'respects director checks option when logging in' do
+        misc_cmd.set_target('test')
+        expect(@director).to receive(:login).with('user', 'pass') { true }
+        login_cmd.login('user', 'pass')
+        expect(misc_cmd.logged_in?).to be(true)
+        expect(misc_cmd.username).to eq('user')
+        expect(misc_cmd.password).to eq('pass')
+      end
     end
   end
 
   describe Bosh::Cli::Command::Stemcell do
     before :each do
       @director = double(Bosh::Cli::Client::Director)
-      @director.stub(:list_stemcells).
+      allow(@director).to receive(:list_stemcells).
           and_return([{'name' => 'foo', 'version' => '123'}])
-      @director.should_receive(:list_stemcells)
+      expect(@director).to receive(:list_stemcells)
 
       @cmd = Bosh::Cli::Command::Stemcell.new
       @cmd.add_option(:non_interactive, true)
 
-      @cmd.stub(:target).and_return('test')
-      @cmd.stub(:username).and_return('user')
-      @cmd.stub(:password).and_return('pass')
-      @cmd.stub(:director).and_return(@director)
+      allow(@cmd).to receive(:target).and_return('test')
+      allow(@cmd).to receive(:username).and_return('user')
+      allow(@cmd).to receive(:password).and_return('pass')
+      allow(@cmd).to receive(:director).and_return(@director)
     end
 
     it 'allows deleting the stemcell' do
-      @director.should_receive(:delete_stemcell).with('foo', '123', :force => false)
+      expect(@director).to receive(:delete_stemcell).with('foo', '123', :force => false)
       @cmd.delete('foo', '123')
     end
 
     it 'allows deleting a stemcell with force' do
-      @director.should_receive(:delete_stemcell).with('foo', '123', :force => true)
+      expect(@director).to receive(:delete_stemcell).with('foo', '123', :force => true)
       @cmd.add_option(:force, true)
       @cmd.delete('foo', '123')
     end
 
     it 'needs confirmation to delete stemcell' do
       @cmd.remove_option(:non_interactive)
-      @director.should_not_receive(:delete_stemcell)
+      expect(@director).not_to receive(:delete_stemcell)
 
-      @cmd.stub(:ask).and_return('')
+      allow(@cmd).to receive(:ask).and_return('')
       @cmd.delete('foo', '123')
     end
 
     it 'raises error when deleting if stemcell does not exist' do
-      @director.should_not_receive(:delete_stemcell)
+      expect(@director).not_to receive(:delete_stemcell)
 
       @cmd.add_option(:non_interactive, true)
-      lambda {
+      expect {
         @cmd.delete('foo', '111')
-      }.should raise_error(Bosh::Cli::CliError,
+      }.to raise_error(Bosh::Cli::CliError,
                            "Stemcell `foo/111' does not exist")
     end
   end
@@ -164,21 +186,21 @@ describe Bosh::Cli::Command::Base do
       @cmd = Bosh::Cli::Command::Release::DeleteRelease.new
       @cmd.add_option(:non_interactive, true)
 
-      @cmd.stub(:target).and_return('test')
-      @cmd.stub(:username).and_return('user')
-      @cmd.stub(:password).and_return('pass')
-      @cmd.stub(:director).and_return(@director)
+      allow(@cmd).to receive(:target).and_return('test')
+      allow(@cmd).to receive(:username).and_return('user')
+      allow(@cmd).to receive(:password).and_return('pass')
+      allow(@cmd).to receive(:director).and_return(@director)
     end
 
     it 'allows deleting the release (non-force)' do
-      @director.should_receive(:delete_release).
+      expect(@director).to receive(:delete_release).
           with('foo', :force => false, :version => nil)
 
       @cmd.delete('foo')
     end
 
     it 'allows deleting the release (force)' do
-      @director.should_receive(:delete_release).
+      expect(@director).to receive(:delete_release).
           with('foo', :force => true, :version => nil)
 
       @cmd.add_option(:force, true)
@@ -186,14 +208,14 @@ describe Bosh::Cli::Command::Base do
     end
 
     it 'allows deleting a particular release version (non-force)' do
-      @director.should_receive(:delete_release).
+      expect(@director).to receive(:delete_release).
           with('foo', :force => false, :version => '42')
 
       @cmd.delete('foo', '42')
     end
 
     it 'allows deleting a particular release version (force)' do
-      @director.should_receive(:delete_release).
+      expect(@director).to receive(:delete_release).
           with('foo', :force => true, :version => '42')
 
       @cmd.add_option(:force, true)
@@ -201,10 +223,10 @@ describe Bosh::Cli::Command::Base do
     end
 
     it 'requires confirmation on deleting release' do
-      @director.should_not_receive(:delete_release)
+      expect(@director).not_to receive(:delete_release)
       @cmd.remove_option(:non_interactive)
 
-      @cmd.stub(:ask).and_return('')
+      allow(@cmd).to receive(:ask).and_return('')
       @cmd.delete('foo')
     end
   end
@@ -216,15 +238,15 @@ describe Bosh::Cli::Command::Base do
       @cmd = Bosh::Cli::Command::Release::ListReleases.new
       @cmd.add_option(:non_interactive, true)
 
-      @cmd.stub(:target).and_return('test')
-      @cmd.stub(:username).and_return('user')
-      @cmd.stub(:password).and_return('pass')
-      @cmd.stub(:director).and_return(@director)
+      allow(@cmd).to receive(:target).and_return('test')
+      allow(@cmd).to receive(:username).and_return('user')
+      allow(@cmd).to receive(:password).and_return('pass')
+      allow(@cmd).to receive(:director).and_return(@director)
     end
 
     describe 'listing releases' do
       before do
-        @cmd.stub :nl
+        allow(@cmd).to receive :nl
       end
 
       context "when the director doesn't include commit hash information (version < 1.5)" do
@@ -248,11 +270,11 @@ describe Bosh::Cli::Command::Base do
 
 
         it 'lists releases in a nice table and include information about current deployments' do
-          @director.stub(list_releases: [release])
+          allow(@director).to receive_messages(list_releases: [release])
 
-          @cmd.should_receive(:say).with(releases_table)
-          @cmd.should_receive(:say).with('(*) Currently deployed')
-          @cmd.should_receive(:say).with('Releases total: 1')
+          expect(@cmd).to receive(:say).with(releases_table)
+          expect(@cmd).to receive(:say).with('(*) Currently deployed')
+          expect(@cmd).to receive(:say).with('Releases total: 1')
 
           @cmd.list
         end
@@ -298,23 +320,23 @@ describe Bosh::Cli::Command::Base do
         end
 
         it 'lists releases in a nice table and includes information about current deployments and uncommitted changes' do
-          @director.stub(list_releases: [release])
+          allow(@director).to receive_messages(list_releases: [release])
 
-          @cmd.should_receive(:say).with(releases_table)
-          @cmd.should_receive(:say).with('(*) Currently deployed')
-          @cmd.should_receive(:say).with('(+) Uncommitted changes')
-          @cmd.should_receive(:say).with('Releases total: 1')
+          expect(@cmd).to receive(:say).with(releases_table)
+          expect(@cmd).to receive(:say).with('(*) Currently deployed')
+          expect(@cmd).to receive(:say).with('(+) Uncommitted changes')
+          expect(@cmd).to receive(:say).with('Releases total: 1')
 
           @cmd.list
         end
 
         it 'lists releases in a nice table and includes job names if available' do
-          @director.stub(list_releases: [release])
+          allow(@director).to receive_messages(list_releases: [release])
 
-          @cmd.should_receive(:say).with(releases_with_jobs_table)
-          @cmd.should_receive(:say).with('(*) Currently deployed')
-          @cmd.should_receive(:say).with('(+) Uncommitted changes')
-          @cmd.should_receive(:say).with('Releases total: 1')
+          expect(@cmd).to receive(:say).with(releases_with_jobs_table)
+          expect(@cmd).to receive(:say).with('(*) Currently deployed')
+          expect(@cmd).to receive(:say).with('(+) Uncommitted changes')
+          expect(@cmd).to receive(:say).with('Releases total: 1')
 
           @cmd.add_option(:jobs, true)
           @cmd.list
@@ -331,41 +353,41 @@ describe Bosh::Cli::Command::Base do
       @blob_manager = double('blob manager')
       @release = double('release')
 
-      @cmd.should_receive(:check_if_release_dir)
-      Bosh::Cli::Release.stub(:new).and_return(@release)
-      Bosh::Cli::BlobManager.stub(:new).with(@release).
+      expect(@cmd).to receive(:check_if_release_dir)
+      allow(Bosh::Cli::Release).to receive(:new).and_return(@release)
+      allow(Bosh::Cli::BlobManager).to receive(:new).with(@release, kind_of(Integer), kind_of(Bosh::Cli::NonInteractiveProgressRenderer)).
           and_return(@blob_manager)
     end
 
     it 'prints blobs status' do
-      @blob_manager.should_receive(:print_status)
+      expect(@blob_manager).to receive(:print_status)
       @cmd.status
     end
 
     it 'adds blob under provided directory' do
-      @blob_manager.should_receive(:add_blob).with('foo/bar.tgz', 'bar/bar.tgz')
+      expect(@blob_manager).to receive(:add_blob).with('foo/bar.tgz', 'bar/bar.tgz')
       @cmd.add('foo/bar.tgz', 'bar')
     end
 
     it 'adds blob with no directory provided' do
-      @blob_manager.should_receive(:add_blob).with('foo/bar.tgz', 'bar.tgz')
+      expect(@blob_manager).to receive(:add_blob).with('foo/bar.tgz', 'bar.tgz')
       @cmd.add('foo/bar.tgz')
     end
 
     it 'uploads blobs' do
-      @blob_manager.should_receive(:print_status)
-      @blob_manager.stub(:blobs_to_upload).and_return(%w(foo bar baz))
-      @blob_manager.should_receive(:upload_blob).with('foo')
-      @blob_manager.should_receive(:upload_blob).with('bar')
-      @blob_manager.should_receive(:upload_blob).with('baz')
+      expect(@blob_manager).to receive(:print_status)
+      allow(@blob_manager).to receive(:blobs_to_upload).and_return(%w(foo bar baz))
+      expect(@blob_manager).to receive(:upload_blob).with('foo')
+      expect(@blob_manager).to receive(:upload_blob).with('bar')
+      expect(@blob_manager).to receive(:upload_blob).with('baz')
 
-      @cmd.should_receive(:confirmed?).exactly(3).times.and_return(true)
+      expect(@cmd).to receive(:confirmed?).exactly(3).times.and_return(true)
       @cmd.upload
     end
 
     it 'syncs blobs' do
-      @blob_manager.should_receive(:sync).ordered
-      @blob_manager.should_receive(:print_status).ordered
+      expect(@blob_manager).to receive(:sync).ordered
+      expect(@blob_manager).to receive(:print_status).ordered
       @cmd.sync
     end
   end

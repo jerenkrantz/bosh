@@ -1,60 +1,49 @@
-require 'bosh/dev/vsphere'
-require 'bosh/dev/writable_manifest'
+require 'bosh/dev/openstack'
+require 'bosh/dev/bat/deployment_manifest'
+require 'membrane'
 
 module Bosh::Dev::Openstack
-  class BatDeploymentManifest
-    include Bosh::Dev::WritableManifest
+  class BatDeploymentManifest < Bosh::Dev::Bat::DeploymentManifest
 
-    attr_reader :filename
+    def schema
+      new_schema = super
 
-    def initialize(env, net_type, director_uuid, stemcell_archive)
-      @env = env
-      @net_type = net_type
-      @director_uuid = director_uuid
-      @stemcell_archive = stemcell_archive
-      @filename = 'bat.yml'
-    end
+      new_schema.schemas['cpi'] = value_schema('openstack')
 
-    def to_h
-      manifest_hash = {
-        'cpi' => 'openstack',
-        'properties' => {
-          'vip' => env['BOSH_OPENSTACK_VIP_BAT_IP'],
-          'static_ip' => env['BOSH_OPENSTACK_STATIC_BAT_IP'],
-          'second_static_ip' => env['BOSH_OPENSTACK_SECOND_STATIC_BAT_IP'],
-          'uuid' => director_uuid.value,
-          'pool_size' => 1,
-          'stemcell' => {
-            'name' => stemcell_archive.name,
-            'version' => stemcell_archive.version
-          },
-          'instances' => 1,
-          'key_name' => 'jenkins',
-          'mbus' => "nats://nats:0b450ada9f830085e2cdeff6@#{env['BOSH_OPENSTACK_VIP_BAT_IP']}:4222",
-          'network' => {
-            'type' => net_type,
-            'cloud_properties' => {
-              'net_id' => env['BOSH_OPENSTACK_NET_ID'],
-              'security_groups' => ['default']
-            }
-          }
-        }
-      }
+      properties = new_schema.schemas['properties']
 
-      if net_type == 'manual'
-        manifest_hash['properties']['network'].merge!(
-          'cidr' => env['BOSH_OPENSTACK_NETWORK_CIDR'],
-          'reserved' => [env['BOSH_OPENSTACK_NETWORK_RESERVED']],
-          'static' => [env['BOSH_OPENSTACK_NETWORK_STATIC']],
-          'gateway' => env['BOSH_OPENSTACK_NETWORK_GATEWAY']
-        )
-      end
+      # properties.vip is required
+      properties.schemas['vip'] = string_schema
 
-      manifest_hash
+      # properties.instance_type is optional (defaults to m1.small)
+      properties.schemas['instance_type'] = string_schema
+      properties.optional_keys << 'instance_type'
+
+      # properties.flavor_with_no_ephemeral_disk is required
+      properties.schemas['flavor_with_no_ephemeral_disk'] = string_schema
+
+      # properties.key_name is optional
+      properties.schemas['key_name'] = string_schema
+      properties.optional_keys << 'key_name'
+
+      network_schema = new_schema.schemas['properties'].schemas['networks'].elem_schema.schemas
+      cloud_properties = strict_record({
+        'security_groups' => list_schema(string_schema),
+        'net_id' => string_schema,
+      })
+      # manual requires net_id
+      # dynamic only requires it when there is more than one network
+      cloud_properties.optional_keys << 'net_id' if net_type == 'dynamic'
+      network_schema['cloud_properties'] = cloud_properties
+
+      new_schema
     end
 
     private
 
-    attr_reader :env, :net_type, :stemcell_archive, :director_uuid
+    def optional(key)
+      Membrane::SchemaParser::Dsl::OptionalKeyMarker.new(key)
+    end
+
   end
 end

@@ -24,12 +24,12 @@ describe 'network configuration' do
 
     it 'forward looks up instance' do
       address = dns.getaddress("0.batlight.static.bat.#{bosh_tld}").to_s
-      address.should eq(public_ip)
+      expect(address).to eq(public_ip)
     end
 
     it 'reverse looks up instance' do
       name = dns.getname(public_ip).to_s
-      name.should eq("0.batlight.static.bat.#{bosh_tld}")
+      expect(name).to eq("0.batlight.static.bat.#{bosh_tld}")
     end
 
     it 'resolves instance names from deployed VM' do
@@ -40,7 +40,7 @@ describe 'network configuration' do
       bosh('logs batlight 0 --agent --dir /tmp')
 
       cmd = 'dig +short 0.batlight.static.bat.bosh a 0.batlight.static.bat.microbosh a'
-      ssh(public_ip, 'vcap', cmd, ssh_options).should include(public_ip)
+      expect(ssh(public_ip, 'vcap', cmd, ssh_options)).to include(public_ip)
     end
   end
 
@@ -62,26 +62,42 @@ describe 'network configuration' do
     after { manifest_with_different_dns.delete }
 
     it 'successfully reconfigures VM with new DNS nameservers' do
-      bosh("deployment #{manifest_with_different_dns.to_path}").should succeed
-      bosh('deploy').should succeed
-      ssh(public_ip, 'vcap', 'cat /etc/resolv.conf', ssh_options).should include('127.0.0.5')
+      expect(bosh("deployment #{manifest_with_different_dns.to_path}")).to succeed
+      expect(bosh('deploy')).to succeed
+      expect(ssh(public_ip, 'vcap', 'cat /etc/resolv.conf', ssh_options)).to include('127.0.0.5')
     end
   end
 
   context 'when using manual networking' do
     before do
-      unless @requirements.stemcell.supports_changing_static_ip?(network_type)
-        skip "network reconfiguration does not work for #{@requirements.stemcell}"
-      end
+      skip "not using manual networking" unless manual_networking?
     end
 
     it 'changes static IP address' do
+      unless @requirements.stemcell.supports_changing_static_ip?(network_type)
+        skip "network reconfiguration does not work for #{@requirements.stemcell}"
+      end
+
       use_second_static_ip
       deployment = with_deployment
-      bosh("deployment #{deployment.to_path}").should succeed
-      bosh('deploy').should succeed
+      expect(bosh("deployment #{deployment.to_path}")).to succeed
+      expect(bosh('deploy')).to succeed
 
-      ssh(public_ip, 'vcap', '/sbin/ifconfig', ssh_options).should include(second_static_ip)
+      expect(ssh(public_ip, 'vcap', '/sbin/ifconfig', ssh_options)).to include(second_static_ip)
+    end
+
+    it 'deploys multiple manual networks' do
+      unless @requirements.stemcell.supports_multiple_manual_networks?
+        skip "multiple manual networks are not supported for #{@requirements.stemcell}"
+      end
+
+      use_multiple_manual_networks
+      deployment = with_deployment
+      expect(bosh("deployment #{deployment.to_path}")).to succeed
+      expect(bosh('deploy')).to succeed
+
+      expect(ssh(public_ip, 'vcap', '/sbin/ifconfig', ssh_options)).to include(static_ips[0])
+      expect(ssh(public_ip, 'vcap', '/sbin/ifconfig', ssh_options)).to include(static_ips[1])
     end
   end
 end

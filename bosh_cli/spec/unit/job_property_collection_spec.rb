@@ -5,12 +5,11 @@ require "spec_helper"
 describe Bosh::Cli::JobPropertyCollection do
 
   def make_job(properties)
-    double(Bosh::Cli::JobBuilder, :properties => properties)
+    double(Bosh::Cli::Resources::Job, :properties => properties) #stop using a double?
   end
 
-  def make(job_builder, global_properties, job_properties = {}, mappings = {})
-    Bosh::Cli::JobPropertyCollection.new(
-      job_builder, global_properties, job_properties, mappings)
+  def make(job, global_properties, job_properties = {}, mappings = {})
+    Bosh::Cli::JobPropertyCollection.new(job, global_properties, job_properties, mappings)
   end
 
   it "copies all properties from the manifest if no properties are defined" do
@@ -34,7 +33,7 @@ describe Bosh::Cli::JobPropertyCollection do
 
     pc = make(make_job({}), manifest_properties, job_properties)
 
-    pc.to_hash.should == {
+    expect(pc.to_hash).to eq({
       "cc" => {
         "token" => "deadbeef",
         "foo" => %w(bar baz zaz),
@@ -45,7 +44,7 @@ describe Bosh::Cli::JobPropertyCollection do
       },
       "empty" => {},
       "foo" => "bar"
-    }
+    })
   end
 
   it "copies only needed properties if job properties are defined" do
@@ -71,10 +70,10 @@ describe Bosh::Cli::JobPropertyCollection do
 
     pc = make(make_job(property_defs), manifest_properties, job_properties)
 
-    pc.to_hash.should == {
+    expect(pc.to_hash).to eq({
       "cc" => {"foo" => "bar"},
       "router" => {"token" => "zbb", "user" => "admin"}
-    }
+    })
   end
 
   it "supports property mappings" do
@@ -99,13 +98,13 @@ describe Bosh::Cli::JobPropertyCollection do
 
     pc = make(make_job(property_defs), properties, {}, mappings)
 
-    pc.to_hash.should == {
+    expect(pc.to_hash).to eq({
       "db" => {
         "user" => "admin",
         "password" => "secret"
       },
       "token" => "deadbeef"
-    }
+    })
   end
 
 end

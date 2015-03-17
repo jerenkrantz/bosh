@@ -1,13 +1,8 @@
 require 'spec_helper'
 
 describe 'cli: deployment process', type: :integration do
+  include Bosh::Spec::CreateReleaseOutputParsers
   with_reset_sandbox_before_each
-
-  def parse_release_tarball_path(create_release_output)
-    regex = /^Release tarball \(.*\): (.*\.tgz)$/
-    expect(create_release_output).to match(regex)
-    create_release_output.match(regex)[1]
-  end
 
   it 'successfully performed with minimal manifest' do
     release_filename = spec_asset('valid_release.tgz')
@@ -57,7 +52,7 @@ describe 'cli: deployment process', type: :integration do
     # Test release created with bosh (see spec/assets/test_release_template)
     stemcell_filename = spec_asset('valid_stemcell.tgz') # Dummy stemcell (ubuntu-stemcell 1)
 
-    release_filename = Dir.chdir(TEST_RELEASE_DIR) do
+    release_filename = Dir.chdir(ClientSandbox.test_release_dir) do
       FileUtils.rm_rf('dev_releases')
       output = bosh_runner.run_in_current_dir('create release --with-tarball')
       parse_release_tarball_path(output)

@@ -4,6 +4,7 @@ module Bosh::Director
   include Api::Http
 
   class ProblemHandlerError < StandardError; end
+  class AuthenticationError < StandardError; end
 
   # DirectorError is a generic exception for most of the errors originated
   # in BOSH Director.
@@ -111,6 +112,7 @@ module Bosh::Director
   JobInvalidPropertyMapping = err(80009)
   JobIncompatibleSpecs = err(80010)
   JobPackageCollision = err(80011)
+  JobInvalidPackageSpec = err(80012)
 
   ResourceError = err(100001)
   ResourceNotFound = err(100002, NOT_FOUND)
@@ -145,6 +147,8 @@ module Bosh::Director
   JobMissingNetwork = err(140007)
   JobInvalidTemplates = err(140008)
   JobInvalidLifecycle = err(140009)
+  JobUnknownDiskPool = err(140010)
+  JobInvalidPersistentDisk = err(140011)
 
   # Manifest parsing: job networks section
   JobUnknownNetwork = err(150001)
@@ -175,6 +179,9 @@ module Bosh::Director
   DeploymentCanonicalNameTaken = err(190008)
   DeploymentInvalidNetworkType = err(190009)
   DeploymentUnknownTemplate = err(190012)
+  DeploymentDuplicateDiskPoolName = err(190013)
+
+  DiskPoolInvalidDiskSize = err(200001)
 
   CloudDiskNotAttached = err(390001)
   CloudDiskMissing = err(390002)

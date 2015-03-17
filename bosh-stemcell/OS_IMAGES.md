@@ -7,6 +7,79 @@ OS images are stored in S3 bucket [bosh-os-images](http://s3.amazonaws.com/bosh-
 
 Ubuntu 14.04 images have filename `bosh-ubuntu-trusty-os-image.tgz`
 
+* `jU0u9AnG550hgtZhH4TS30eU0lOJZxWn`
+  update libc6 to 2.19-0ubuntu6.6
+  update linux-headers to 3.16.0-31
+
+* `bUE_h7edxT9PNKT6ntBKvXH8MzK3.wiA`
+  update trusty to 14.04.2
+
+* `O6Co_wDMuso7prheiIRVc_Q7_T1sC0EP`
+  upgrade unzip to 6.0-9ubuntu1.3
+
+* 'yacqn9ooY2Idc6Fb65QE25zl2MSvPX52'
+  lock down sshd_config permissions
+  disable weak ssh ciphers
+  disable weak ssh MACs
+  remove postfix
+
+* 'TjC3SnsvaIhROEa1J1L77Mj21TRikCW0'
+  upgrade unzip to 6.0-9ubuntu1.2
+
+* `xIk.jCEzC5CrI.VrogNsyKRnHBtNIJ1w`
+  Adds kernel flags to enable console output in openstack environments
+  upgrade linux kernel to 3.13.0-45
+
+* `LNYTMCODzn39poV8I4yUg1RxmAfTZPth`
+  upgrade libssl to 1.0.1f-1ubuntu2.8
+
+* `Wxp0XbijOQyo_pYgs3ctYQ0Dc6uPaO.I`
+  switch logrotate to rotate based on size
+
+* `QB8K.uFpJXHYJ4Nm.Of.CALZ_8Vh7sF2`
+  start monit during agent bootstrap
+
+* `shN71hxWcKt1xy54u8H6vcTJX3whZZ1y`
+  disable reverse DNS resolution for sshd
+
+* `VSHa.AirKTKl2thd3d.Ld0LZirE7kK8Z`
+  enable rsyslog kernel logging
+
+* `9_XaaM0qR6ReYHJvyJstqf52IL_1zJOQ`
+  upgrade linux kernel to 3.13.0-39
+
+* `omOTKc0mI6GFkX_HWgPAxfZicfQEvq2B`
+  upgrade bash to 4.3-7ubuntu1.5
+  upgrade libssl to 1.0.1f-1ubuntu2.7
+
+* `qLay8YgGATMjiQZwWv0C26GZ7IUWy.qh`
+  upgrade bash to 4.3-7ubuntu1.4
+
+* `_pB.QMUs1y8oQAvDyjvGI9ccfIOtU0Do`
+  upgrade bash to 4.3-7ubuntu1.3
+
+* `GW4JUpDT_wsDu9TgsDRgXfcNBMVSfziW`
+  upgrade bash to 4.3-7ubuntu1.2
+
+* `9ysc4UIkmhpIhonEJzEeNbIpc8t38KxH`
+  upgrade bash to 4.3-7ubuntu1.1
+
+* `7956UhwNIGtYVKliAcpJFCO7iquWbhQR`
+  install parted
+
+* `cJItjk12ZCUgOo591c10FLHpAcVIwWDZ`
+  update libgcrypt11 to 1.5.3-2ubuntu4.1
+  update gnupg to 1.4.16-1ubuntu2.1
+
+* `P9CaP1LYyF6DBXYWEf0G7mf2qY2z_l1D`
+  update kernel to 3.13.0-35.62 and libc6 to 2.19-0ubuntu6.3
+
+* `pGDuX7KzvJI7sXfGDU5obN8qxcD03e57`
+  update kernel to 3.13.0-34.60
+
+* `EhzrTcjEIEfEBBfcl3dnlBld2ZDjTveA`
+  using latest libssl `1.0.1f-1ubuntu2`
+
 * `KXC8x5eWAI71IOc_IelrkLEGNA6_cjRw`
   Remove resolv.conf clearing from firstboot.sh
   (3c785776c5093995e66bb1dce3253dfbeec51e40)
@@ -32,40 +105,35 @@ Ubuntu 14.04 images have filename `bosh-ubuntu-trusty-os-image.tgz`
   (e448b0e8b0967288488c929fbbf953b22a046d1d)
 
 
-## CentOS
+## CentOS 6.6
 
-CentOS images have filename `bosh-centos-6_5-os-image.tgz`
+CentOS 6.6 images have filename `bosh-centos-6_6-os-image.tgz`
 
-* `d085u3Knx4KtTOGmFmanfNHH_oY9Hd.n`
-  using latest OpenSSL `1.0.1f`
-  (23fe6fcd8518446cbdbec360c2f1e4b37834db88)
+* '3Yu.JSS0rB0oV6Gt3QnFfxaxvRju71bQ'
+  lock down sshd_config permissions
+  disable weak ssh ciphers
+  disable weak ssh MACs
 
-* `OTJRx3.keQXrSVMfXhvhRhwWH1wrbdvV`
-  set timezone (UTC) and locale (UTF8)
-  (1eecf11f5fb153effc44cc720ea4b232a620649f)
+* `lUG9hrPUDugWx4Sv5vuKiN1X2Z1.lN.8`
+  Adds kernel flags to enable console output in openstack environments
 
-* `IFHfIgS_2fIP.U0cWMH7..afJjo4ysz0`
-  upgraded OpenSSL to `1.0.1e-16.el6_5.7`
+* `.EqtRtHJyHTr3hg4nFPq5QmJ4UxQ2WU.`
+  upgrade linux kernel to 3.13.0-45
 
-* `wFNFCug89mKKgjxVdpITswcfWVPETDUS`
-  CentOS 6.5
+* `ISA4tKjaoq4koVay5rAzNZlzX7X0KafH`
+  patch GNU libc to resolve CVE-2015-0235, "GHOST"
 
+* `aoUtngdallpd2f6HhMxCveFvk6t6B2Ru`
+  upgrade openssl to 1.0.1e-30.el6_6.5
 
-## Ubuntu 10.04
+* `Hb884_xVvhoIhdTEmMtaTHKC.s7b9AmN`
+  switch logrotate to rotate based on size
 
-Ubuntu 10.04 images have filename `bosh-ubuntu-lucid-os-image.tgz`
+* `xbBfE2GA7AgmCGA6MfNfhHX67vkJlIze`
+  start monit during agent bootstrap
 
-* `hGvKHxxg9bboL3e1Ldi27H746AsmEcRQ`
-  Remove resolv.conf clearing from firstboot.sh
-  (307d760b783454c96717a9b1036265783826a369)
+* `PB2C5YnPG.zZ5MgjBR96Y40UDpqVQb_D`
+  disable reverse DNS resolution for sshd
 
-* `IFBbp72WZyd3SHN.75RWZz.jWJeEU40s`
-  using latest OpenSSL `1.0.1f`
-  (23fe6fcd8518446cbdbec360c2f1e4b37834db88)
-
-* `EGp_C9N3T0ctgdv0FJ44_AuF7MUlpA9G`
-  using /sbin/rescan-scsi-bus to match Ubuntu 14.04
-  (e448b0e8b0967288488c929fbbf953b22a046d1d)
-
-* `r5606X8C8rS8dBlENBVEXoIaPVBVobXw`
-  Ubuntu 10.04
+* `6mBEQ5Gt5O6NJIFZxlyrf_05i.6s0OWF`
+  CentOS 6.6

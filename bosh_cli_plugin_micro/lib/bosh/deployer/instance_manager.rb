@@ -50,7 +50,7 @@ module Bosh::Deployer
       @infrastructure = plugin_class.new(self, config, logger)
 
       @deployments_state = DeploymentsState.load_from_dir(config.base_dir, logger)
-      deployments_state.load_deployment(config.name, infrastructure)
+      deployments_state.load_deployment(config.name)
 
       config.uuid = state.uuid
 
@@ -279,9 +279,13 @@ module Bosh::Deployer
     def create_disk
       step 'Create disk' do
         size = config.resources['persistent_disk']
-        state.disk_cid = cloud.create_disk(size, state.vm_cid)
+        state.disk_cid = cloud.create_disk(size, persistent_disk_cloud_properties, state.vm_cid)
         save_state
       end
+    end
+
+    def persistent_disk_cloud_properties
+      config.resources.fetch('persistent_disk_cloud_properties', {})
     end
 
     # it is up to the caller to save/update disk state info
@@ -354,7 +358,7 @@ module Bosh::Deployer
         old_disk_cid = state.disk_cid
 
         # create a new disk and attach it
-        new_disk_cid = cloud.create_disk(size, state.vm_cid)
+        new_disk_cid = cloud.create_disk(size, persistent_disk_cloud_properties, state.vm_cid)
         attach_disk(new_disk_cid, true)
 
         # migrate data (which mounts the disks)

@@ -4,21 +4,28 @@ require 'cloud'
 require 'logger'
 
 describe Bosh::OpenStackCloud::Cloud do
-  before(:all) do
-    @auth_url         = ENV['BOSH_OPENSTACK_AUTH_URL']    || raise('Missing BOSH_OPENSTACK_AUTH_URL')
-    @username         = ENV['BOSH_OPENSTACK_USERNAME']    || raise('Missing BOSH_OPENSTACK_USERNAME')
-    @api_key          = ENV['BOSH_OPENSTACK_API_KEY']     || raise('Missing BOSH_OPENSTACK_API_KEY')
-    @tenant           = ENV['BOSH_OPENSTACK_TENANT']      || raise('Missing BOSH_OPENSTACK_TENANT')
-    @stemcell_id      = ENV['BOSH_OPENSTACK_STEMCELL_ID'] || raise('Missing BOSH_OPENSTACK_STEMCELL_ID')
-    @net_id           = ENV['BOSH_OPENSTACK_NET_ID']      || raise('Missing BOSH_OPENSTACK_NET_ID')
-    @manual_ip        = ENV['BOSH_OPENSTACK_MANUAL_IP']   || raise('Missing BOSH_OPENSTACK_MANUAL_IP')
-    @default_key_name = ENV.fetch('BOSH_OPENSTACK_DEFAULT_KEY_NAME', 'jenkins')
+  before do
+    @auth_url          = get_config(:auth_url, 'BOSH_OPENSTACK_AUTH_URL')
+    @username          = get_config(:username, 'BOSH_OPENSTACK_USERNAME')
+    @api_key           = get_config(:api_key, 'BOSH_OPENSTACK_API_KEY')
+    @tenant            = get_config(:tenant, 'BOSH_OPENSTACK_TENANT')
+    @stemcell_id       = get_config(:stemcell_id, 'BOSH_OPENSTACK_STEMCELL_ID')
+    @net_id            = get_config(:net_id, 'BOSH_OPENSTACK_NET_ID')
+    @boot_volume_type  = get_config(:volume_type, 'BOSH_OPENSTACK_VOLUME_TYPE')
+    @manual_ip         = get_config(:manual_ip, 'BOSH_OPENSTACK_MANUAL_IP')
+    @disable_snapshots = get_config(:disable_snapshots, 'BOSH_OPENSTACK_DISABLE_SNAPSHOTS', false)
+    @default_key_name  = get_config(:default_key_name, 'BOSH_OPENSTACK_DEFAULT_KEY_NAME', 'jenkins')
+    @config_drive      = get_config(:config_drive, 'BOSH_OPENSTACK_CONFIG_DRIVE', 'cdrom')
+    @ignore_server_az  = get_config(:ignore_server_az, 'BOSH_OPENSTACK_IGNORE_SERVER_AZ', 'false')
+    @instance_type     = get_config(:instance_type, 'BOSH_OPENSTACK_INSTANCE_TYPE', 'm1.small')
 
     # some environments may not have this set, and it isn't strictly necessary so don't raise if it isn't set
-    @region = ENV['BOSH_OPENSTACK_REGION']
+    @region             = get_config(:region, 'BOSH_OPENSTACK_REGION', nil)
   end
 
   let(:boot_from_volume) { false }
+  let(:boot_volume_type) { nil }
+  let(:config_drive) { nil }
 
   subject(:cpi) do
     described_class.new(
@@ -33,6 +40,11 @@ describe Bosh::OpenStackCloud::Cloud do
         'default_security_groups' => %w(default),
         'wait_resource_poll_interval' => 5,
         'boot_from_volume' => boot_from_volume,
+        'boot_volume_cloud_properties' => {
+          'type' => boot_volume_type
+        },
+        'config_drive' => config_drive,
+        'ignore_server_availability_zone' => @ignore_server_az,
       },
       'registry' => {
         'endpoint' => 'fake',
@@ -43,7 +55,7 @@ describe Bosh::OpenStackCloud::Cloud do
   end
 
   before do
-    delegate = double('delegate', task_checkpoint: nil, logger: logger)
+    delegate = double('delegate', task_checkpoint: nil, logger: logger, cpi_task_log: nil)
     Bosh::Clouds::Config.configure(delegate)
   end
 
@@ -73,7 +85,7 @@ describe Bosh::OpenStackCloud::Cloud do
     end
 
     context 'with existing disks' do
-      before { @existing_volume_id = cpi.create_disk(2048) }
+      before { @existing_volume_id = cpi.create_disk(2048, {}) }
       after { cpi.delete_disk(@existing_volume_id) if @existing_volume_id }
 
       it 'exercises the vm lifecycle' do
@@ -106,15 +118,10 @@ describe Bosh::OpenStackCloud::Cloud do
     end
 
     context 'with existing disks' do
-      before { @existing_volume_id = cpi.create_disk(2048) }
+      before { @existing_volume_id = cpi.create_disk(2048, {}) }
       after { cpi.delete_disk(@existing_volume_id) if @existing_volume_id }
 
       it 'exercises the vm lifecycle' do
-        # Sometimes Quantum is too slow to release an IP address, so when we
-        # spin up a new vm reusing the same IP it fails with a vm state error
-        # but without any clue what the problem is (you should check the nova log).
-        # This should be removed once we figure out how to deal with this situation.
-        sleep(120)
         expect {
           vm_lifecycle(@stemcell_id, network_spec, [@existing_volume_id])
         }.to_not raise_error
@@ -135,27 +142,93 @@ describe Bosh::OpenStackCloud::Cloud do
           }
         }
       }
+    end
 
-      it 'exercises the vm lifecycle' do
-        expect {
-          vm_lifecycle(@stemcell_id, network_spec, [])
-        }.to_not raise_error
-      end
+    it 'exercises the vm lifecycle' do
+      expect {
+        vm_lifecycle(@stemcell_id, network_spec, [])
+      }.to_not raise_error
     end
   end
 
-  def vm_lifecycle(stemcell_id, network_spec, disk_locality)
+  context 'when booting from volume with a boot_volume_type' do
+    let(:boot_from_volume) { true }
+    let(:boot_volume_type) { @boot_volume_type }
+
+    let(:network_spec) do
+      {
+        'default' => {
+          'type' => 'manual',
+          'ip' => @manual_ip,
+          'cloud_properties' => {
+            'net_id' => @net_id
+          }
+        }
+      }
+    end
+
+    it 'exercises the vm lifecycle' do
+      expect {
+        vm_lifecycle(@stemcell_id, network_spec, [])
+      }.to_not raise_error
+    end
+  end
+
+  context 'when using cloud_properties' do
+    let(:cloud_properties) { { 'type' => @boot_volume_type } }
+
+    let(:network_spec) do
+      {
+        'default' => {
+          'type' => 'dynamic',
+          'cloud_properties' => {
+            'net_id' => @net_id
+          }
+        }
+      }
+    end
+
+    it 'exercises the vm lifecycle' do
+      expect {
+        vm_lifecycle(@stemcell_id, network_spec, [], cloud_properties)
+      }.to_not raise_error
+    end
+  end
+
+  context 'when using config drive as cdrom' do
+    let(:config_drive) { @config_drive }
+
+    let(:network_spec) do
+      {
+        'default' => {
+          'type' => 'dynamic',
+          'cloud_properties' => {
+            'net_id' => @net_id
+          }
+        }
+      }
+    end
+
+    it 'exercises the vm lifecycle' do
+      expect {
+        vm_lifecycle(@stemcell_id, network_spec, [])
+      }.to_not raise_error
+    end
+  end
+
+  def vm_lifecycle(stemcell_id, network_spec, disk_locality, cloud_properties = {})
     vm_id = create_vm(stemcell_id, network_spec, disk_locality)
-    disk_id = create_disk(vm_id)
-    disk_snapshot_id = create_disk_snapshot(disk_id)
+    disk_id = create_disk(vm_id, cloud_properties)
+    disk_snapshot_id = create_disk_snapshot(disk_id) unless @disable_snapshots
   rescue Exception => create_error
   ensure
     # create_error is in scope and possibly populated!
-    run_all_and_raise_any_errors(create_error, [
-      lambda { clean_up_disk_snapshot(disk_snapshot_id) },
+    funcs = [
       lambda { clean_up_disk(disk_id) },
-      lambda { clean_up_vm(vm_id) },
-    ])
+      lambda { clean_up_vm(vm_id, network_spec) },
+    ]
+    funcs.unshift(lambda { clean_up_disk_snapshot(disk_snapshot_id) }) unless @disable_snapshots
+    run_all_and_raise_any_errors(create_error, funcs)
   end
 
   def create_vm(stemcell_id, network_spec, disk_locality)
@@ -163,7 +236,7 @@ describe Bosh::OpenStackCloud::Cloud do
     vm_id = cpi.create_vm(
       'agent-007',
       stemcell_id,
-      { 'instance_type' => 'm1.small'},
+      { 'instance_type' => @instance_type },
       network_spec,
       disk_locality,
       { 'key' => 'value'}
@@ -183,21 +256,27 @@ describe Bosh::OpenStackCloud::Cloud do
     vm_id
   end
 
-  def clean_up_vm(vm_id)
+  def clean_up_vm(vm_id, network_spec)
     if vm_id
       logger.info("Deleting VM vm_id=#{vm_id}")
       cpi.delete_vm(vm_id)
 
       logger.info("Checking VM existence vm_id=#{vm_id}")
       expect(cpi).to_not have_vm(vm_id)
+
+      if network_spec['default']['type'] == 'manual'
+        # Wait for manual IP to be released by the infrastructure
+        # We have seen Piston take a couple minutes to release an IP address
+        sleep 120
+      end
     else
       logger.info('No VM to delete')
     end
   end
 
-  def create_disk(vm_id)
+  def create_disk(vm_id, cloud_properties)
     logger.info("Creating disk for VM vm_id=#{vm_id}")
-    disk_id = cpi.create_disk(2048, vm_id)
+    disk_id = cpi.create_disk(2048, cloud_properties, vm_id)
     expect(disk_id).to be
 
     logger.info("Attaching disk vm_id=#{vm_id} disk_id=#{disk_id}")
@@ -256,5 +335,27 @@ describe Bosh::OpenStackCloud::Cloud do
     # Prints all exceptions but raises original exception
     exceptions.each { |e| logger.info("Failed with: #{e.inspect}\n#{e.backtrace.join("\n")}\n") }
     raise exceptions.first if exceptions.any?
+  end
+
+  def get_config(key, env_key, default=:none)
+    env_file = ENV['LIFECYCLE_ENV_FILE']
+    env_name = ENV['LIFECYCLE_ENV_NAME']
+
+    if env_file && env_name
+      @configs ||= YAML.load_file(env_file)
+      config = @configs[env_name]
+      raise "no such env #{env_name} in #{env_file} (available: #{@configs.keys.sort.join(", ")})" unless config
+
+      value = config[key.to_s]
+      present = config.has_key?(key.to_s)
+    else
+      value = ENV[env_key]
+      present = ENV.has_key?(env_key)
+    end
+
+    if !present && default == :none
+      raise("Missing #{key}/#{env_key}; use LIFECYCLE_ENV_FILE=file.yml and LIFECYCLE_ENV_NAME=xxx or set in ENV")
+    end
+    present ? value : default
   end
 end

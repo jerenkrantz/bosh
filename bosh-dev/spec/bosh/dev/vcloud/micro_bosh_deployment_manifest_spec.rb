@@ -19,7 +19,9 @@ module Bosh::Dev::VCloud
 name: microbosh-vcloud-jenkins
 
 network:
+  name: micro-network
   ip: ip
+  vip: vip
   netmask: netmask
   gateway: gateway
   dns:
@@ -56,11 +58,14 @@ cloud:
             wait_max: 900
 env:
   vapp: vcloud_vapp_name
+logging:
+  level: debug
 YAML
 
       before do
         env.merge!(
           'BOSH_VCLOUD_MICROBOSH_IP' => 'ip',
+          'BOSH_VCLOUD_MICROBOSH_VIP' => 'vip',
           'BOSH_VCLOUD_NETMASK' => 'netmask',
           'BOSH_VCLOUD_GATEWAY' => 'gateway',
           'BOSH_VCLOUD_DNS' => 'dns',

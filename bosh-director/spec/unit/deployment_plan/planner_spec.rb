@@ -5,6 +5,60 @@ module Bosh::Director
     describe Planner do
       subject { described_class.new('fake-dep-name') }
 
+      let(:event_log) { instance_double('Bosh::Director::EventLog::Log') }
+
+      describe 'parse' do
+        it 'parses disk_pools' do
+          manifest = minimal_manifest
+          manifest['disk_pools'] = [
+            {
+              'name' => 'disk_pool1',
+              'disk_size' => 3000,
+            },
+            {
+              'name' => 'disk_pool2',
+              'disk_size' => 1000,
+            },
+          ]
+          planner = Planner.parse(manifest, {}, event_log, logger)
+          expect(planner.disk_pools.length).to eq(2)
+          expect(planner.disk_pool('disk_pool1').disk_size).to eq(3000)
+          expect(planner.disk_pool('disk_pool2').disk_size).to eq(1000)
+        end
+      end
+
+      def minimal_manifest
+        {
+          'name' => 'minimal',
+          # 'director_uuid'  => 'deadbeef',
+
+          'releases' => [{
+            'name'    => 'appcloud',
+            'version' => '0.1' # It's our dummy valid release from spec/assets/valid_release.tgz
+          }],
+
+          'networks' => [{
+            'name' => 'a',
+            'subnets' => [],
+          }],
+
+          'compilation' => {
+            'workers' => 1,
+            'network' => 'a',
+            'cloud_properties' => {},
+          },
+
+          'resource_pools' => [],
+
+          'update' => {
+            'canaries'          => 2,
+            'canary_watch_time' => 4000,
+            'max_in_flight'     => 1,
+            'update_watch_time' => 20
+          }
+        }
+      end
+
       describe '#initialize' do
         it 'raises an error if name is not given' do
           expect {
@@ -28,11 +82,11 @@ module Bosh::Director
           it 'creates new deployment in DB using name from the manifest' do
             plan = make_plan('mycloud')
 
-            find_deployment('mycloud').should be_nil
+            expect(find_deployment('mycloud')).to be_nil
             plan.bind_model
 
-            plan.model.should == find_deployment('mycloud')
-            Models::Deployment.count.should == 1
+            expect(plan.model).to eq(find_deployment('mycloud'))
+            expect(Models::Deployment.count).to eq(1)
           end
 
           it 'uses an existing deployment model if found in DB' do
@@ -40,8 +94,8 @@ module Bosh::Director
 
             deployment = make_deployment('mycloud')
             plan.bind_model
-            plan.model.should == deployment
-            Models::Deployment.count.should == 1
+            expect(plan.model).to eq(deployment)
+            expect(Models::Deployment.count).to eq(1)
           end
 
           it 'enforces canonical name uniqueness' do
@@ -52,8 +106,8 @@ module Bosh::Director
               plan.bind_model
             }.to raise_error(DeploymentCanonicalNameTaken)
 
-            plan.model.should be_nil
-            Models::Deployment.count.should == 1
+            expect(plan.model).to be_nil
+            expect(Models::Deployment.count).to eq(1)
           end
         end
 
@@ -67,7 +121,7 @@ module Bosh::Director
 
             make_deployment('mycloud')
             plan.bind_model
-            lambda { plan.vms }.should_not raise_error
+            expect { plan.vms }.to_not raise_error
           end
 
           it 'returns a list of VMs in deployment' do
@@ -78,7 +132,7 @@ module Bosh::Director
             vm_model2 = Models::Vm.make(deployment: deployment)
 
             plan.bind_model
-            plan.vms.should =~ [vm_model1, vm_model2]
+            expect(plan.vms).to eq([vm_model1, vm_model2])
           end
         end
 

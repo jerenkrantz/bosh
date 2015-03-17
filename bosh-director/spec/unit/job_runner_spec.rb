@@ -1,6 +1,5 @@
-# Copyright (c) 2009-2012 VMware, Inc.
-
 require 'spec_helper'
+require 'logging'
 
 module Bosh::Director
   describe JobRunner do
@@ -59,20 +58,12 @@ module Bosh::Director
 
     it 'sets up task logs: debug, event, result' do
       event_log = double('event log')
-      debug_log = Logger.new(StringIO.new)
       result_file = double('result file')
 
-      EventLog::Log
-        .stub(:new)
+      allow(EventLog::Log)
+        .to receive(:new)
         .with(File.join(task_dir, 'event'))
         .and_return(event_log)
-
-      log_device = instance_double('MonoLogger::LocklessLogDevice')
-      allow(MonoLogger::LocklessLogDevice).to receive(:new).
-        with(File.join(task_dir, 'debug')).
-        and_return(log_device)
-
-      allow(Logger).to receive(:new).with(log_device).and_return(debug_log)
 
       allow(TaskResultFile).to receive(:new).
         with(File.join(task_dir, 'result')).
@@ -80,10 +71,12 @@ module Bosh::Director
 
       make_runner(sample_job_class, 42)
 
+      logger_repo = Logging::Repository.instance()
+
       config = Config
       expect(config.event_log).to eq(event_log)
-      expect(config.logger).to eq(debug_log)
-      expect(config.redis_options[:logger]).to eq(debug_log)
+      expect(config.logger).to eq(logger_repo.fetch('DirectorJobRunner'))
+      expect(config.redis_options[:logger]).to eq(logger_repo.fetch('DirectorJobRunnerRedis'))
       expect(config.result).to eq(result_file)
     end
 

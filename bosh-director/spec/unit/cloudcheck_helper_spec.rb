@@ -23,7 +23,7 @@ module Bosh::Director
 
     def fake_job_context
       test_problem_handler.job = instance_double('Bosh::Director::Jobs::BaseJob')
-      Config.stub(cloud: fake_cloud)
+      allow(Config).to receive(:cloud).and_return(fake_cloud)
     end
 
     describe '#recreate_vm' do
@@ -104,13 +104,13 @@ module Bosh::Director
         let(:fake_new_agent) { double('Bosh::Director::AgentClient') }
 
         before do
-          VmCreator.stub(:generate_agent_id).and_return('agent-222')
+          allow(VmCreator).to receive(:generate_agent_id).and_return('agent-222')
           Models::Stemcell.make(name: 'stemcell-name', version: '3.0.2', cid: 'sc-302')
 
           vm.update(apply_spec: spec, env: {'key1' => 'value1'})
 
-          SecureRandom.stub(:uuid).and_return('agent-222')
-          AgentClient.stub(:with_defaults).with('agent-222', anything).and_return(fake_new_agent)
+          allow(SecureRandom).to receive(:uuid).and_return('agent-222')
+          allow(AgentClient).to receive(:with_defaults).with('agent-222', anything).and_return(fake_new_agent)
         end
 
         context 'when there is a persistent disk' do
@@ -118,60 +118,25 @@ module Bosh::Director
             Models::PersistentDisk.make(disk_cid: 'disk-cid', instance_id: instance.id)
           end
 
-          context 'and the disk is attached' do
-
-            it 'recreates VM (w/persistent disk)' do
-              fake_cloud.should_receive(:delete_vm).with('vm-cid').ordered
-              fake_cloud.should_receive(:create_vm).
-                  with('agent-222', 'sc-302', {'foo' => 'bar'}, ['A', 'B', 'C'], ['disk-cid'], {'key1' => 'value1'}).
-                  ordered.and_return('new-vm-cid')
-
-              vm_metadata_updater = instance_double('Bosh::Director::VmMetadataUpdater', update: nil)
-              Bosh::Director::VmMetadataUpdater.stub(build: vm_metadata_updater)
-              vm_metadata_updater.should_receive(:update) do |vm, metadata|
-                expect(vm.cid).to eq('new-vm-cid')
-                expect(metadata).to eq({})
-              end
-
-              fake_new_agent.should_receive(:wait_until_ready).ordered
-              fake_cloud.should_receive(:attach_disk).with('new-vm-cid', 'disk-cid').ordered
-
-              fake_new_agent.should_receive(:mount_disk).with('disk-cid').ordered
-              fake_new_agent.should_receive(:apply).with(spec).ordered
-              fake_new_agent.should_receive(:start).ordered
-
-              fake_job_context
-
-              expect {
-                test_problem_handler.apply_resolution(:recreate_vm)
-              }.to change { Models::Vm.where(agent_id: 'agent-007').count }.from(1).to(0)
-
-              instance.reload
-              instance.vm.apply_spec.should == spec
-              instance.vm.cid.should == 'new-vm-cid'
-              instance.vm.agent_id.should == 'agent-222'
-              instance.persistent_disk.disk_cid.should == 'disk-cid'
-            end
-          end
-        end
-
-        context 'when there is no persistent disk' do
-          it 'just recreates the VM' do
-            fake_cloud.should_receive(:delete_vm).with('vm-cid').ordered
-            fake_cloud.should_receive(:create_vm).
-                with('agent-222', 'sc-302', {'foo' => 'bar'}, ['A', 'B', 'C'], [], {'key1' => 'value1'}).
-                ordered.and_return('new-vm-cid')
+          def it_creates_vm_with_persistent_disk
+            expect(fake_cloud).to receive(:delete_vm).with('vm-cid').ordered
+            expect(fake_cloud).to receive(:create_vm).
+              with('agent-222', 'sc-302', {'foo' => 'bar'}, ['A', 'B', 'C'], ['disk-cid'], {'key1' => 'value1'}).
+              ordered.and_return('new-vm-cid')
 
             vm_metadata_updater = instance_double('Bosh::Director::VmMetadataUpdater', update: nil)
-            Bosh::Director::VmMetadataUpdater.stub(build: vm_metadata_updater)
-            vm_metadata_updater.should_receive(:update) do |vm, metadata|
+            allow(Bosh::Director::VmMetadataUpdater).to receive(:build).and_return(vm_metadata_updater)
+            expect(vm_metadata_updater).to receive(:update) do |vm, metadata|
               expect(vm.cid).to eq('new-vm-cid')
               expect(metadata).to eq({})
             end
 
-            fake_new_agent.should_receive(:wait_until_ready).ordered
-            fake_new_agent.should_receive(:apply).with(spec).ordered
-            fake_new_agent.should_receive(:start).ordered
+            expect(fake_new_agent).to receive(:wait_until_ready).ordered
+            expect(fake_cloud).to receive(:attach_disk).with('new-vm-cid', 'disk-cid').ordered
+
+            expect(fake_new_agent).to receive(:mount_disk).with('disk-cid').ordered
+            expect(fake_new_agent).to receive(:apply).with(spec).ordered
+            expect(fake_new_agent).to receive(:start).ordered
 
             fake_job_context
 
@@ -180,9 +145,57 @@ module Bosh::Director
             }.to change { Models::Vm.where(agent_id: 'agent-007').count }.from(1).to(0)
 
             instance.reload
-            instance.vm.apply_spec.should == spec
-            instance.vm.cid.should == 'new-vm-cid'
-            instance.vm.agent_id.should == 'agent-222'
+            expect(instance.vm.apply_spec).to eq(spec)
+            expect(instance.vm.cid).to eq('new-vm-cid')
+            expect(instance.vm.agent_id).to eq('agent-222')
+            expect(instance.persistent_disk.disk_cid).to eq('disk-cid')
+          end
+
+          context 'and the disk is attached' do
+            it 'recreates VM (w/persistent disk) after detaching the disk from the old vm' do
+              it_creates_vm_with_persistent_disk
+            end
+          end
+
+          context 'and the disk is already detached' do
+            before do
+              allow(fake_cloud).to receive(:detach_disk).and_raise(Bosh::Clouds::DiskNotAttached.new('fake-value'))
+            end
+
+            it 'still recreates VM (w/persistent disk)' do
+              it_creates_vm_with_persistent_disk
+            end
+          end
+        end
+
+        context 'when there is no persistent disk' do
+          it 'just recreates the VM' do
+            expect(fake_cloud).to receive(:delete_vm).with('vm-cid').ordered
+            expect(fake_cloud).to receive(:create_vm).
+                with('agent-222', 'sc-302', {'foo' => 'bar'}, ['A', 'B', 'C'], [], {'key1' => 'value1'}).
+                ordered.and_return('new-vm-cid')
+
+            vm_metadata_updater = instance_double('Bosh::Director::VmMetadataUpdater', update: nil)
+            allow(Bosh::Director::VmMetadataUpdater).to receive_messages(build: vm_metadata_updater)
+            expect(vm_metadata_updater).to receive(:update) do |vm, metadata|
+              expect(vm.cid).to eq('new-vm-cid')
+              expect(metadata).to eq({})
+            end
+
+            expect(fake_new_agent).to receive(:wait_until_ready).ordered
+            expect(fake_new_agent).to receive(:apply).with(spec).ordered
+            expect(fake_new_agent).to receive(:start).ordered
+
+            fake_job_context
+
+            expect {
+              test_problem_handler.apply_resolution(:recreate_vm)
+            }.to change { Models::Vm.where(agent_id: 'agent-007').count }.from(1).to(0)
+
+            instance.reload
+            expect(instance.vm.apply_spec).to eq(spec)
+            expect(instance.vm.cid).to eq('new-vm-cid')
+            expect(instance.vm.agent_id).to eq('agent-222')
           end
         end
       end

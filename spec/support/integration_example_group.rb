@@ -1,3 +1,4 @@
+require 'yaml'
 require 'yajl'
 require 'bosh/dev/sandbox/main'
 
@@ -25,9 +26,11 @@ module IntegrationExampleGroup
 
   def bosh_runner
     @bosh_runner ||= Bosh::Spec::BoshRunner.new(
-      BOSH_WORK_DIR,
-      BOSH_CONFIG,
+      ClientSandbox.bosh_work_dir,
+      ClientSandbox.bosh_config,
       current_sandbox.cpi.method(:agent_log_path),
+      @current_sandbox.nats_log_path,
+      @current_sandbox.saved_logs_path,
       logger
     )
   end
@@ -35,8 +38,10 @@ module IntegrationExampleGroup
   def bosh_runner_in_work_dir(work_dir)
     Bosh::Spec::BoshRunner.new(
       work_dir,
-      BOSH_CONFIG,
+      ClientSandbox.bosh_config,
       current_sandbox.cpi.method(:agent_log_path),
+      @current_sandbox.nats_log_path,
+      @current_sandbox.saved_logs_path,
       logger
     )
   end
@@ -46,12 +51,12 @@ module IntegrationExampleGroup
   end
 
   def target_and_login
-    bosh_runner.run("target http://localhost:#{current_sandbox.director_port}")
+    bosh_runner.run("target #{current_sandbox.director_url}")
     bosh_runner.run('login admin admin')
   end
 
   def create_and_upload_test_release
-    Dir.chdir(TEST_RELEASE_DIR) do
+    Dir.chdir(ClientSandbox.test_release_dir) do
       bosh_runner.run_in_current_dir('create release')
       bosh_runner.run_in_current_dir('upload release')
     end
@@ -72,7 +77,8 @@ module IntegrationExampleGroup
 
   def deploy(options)
     no_track = options.fetch(:no_track, false)
-    bosh_runner.run("#{no_track ? '--no-track ' : ''}deploy", options)
+    redact_diff = options.fetch(:redact_diff, false)
+    bosh_runner.run("#{no_track ? '--no-track ' : ''}deploy#{redact_diff ? ' --redact-diff' : ''}", options)
   end
 
   def deploy_simple(options={})
@@ -117,25 +123,35 @@ module IntegrationExampleGroup
     expect(format_output(bosh_runner.run(cmd, :failure_expected => true))).
       to eq(format_output(expected_output))
   end
+
+  def expect_running_vms(job_name_index_list)
+    vms = director.vms
+    expect(vms.map(&:job_name_index)).to match_array(job_name_index_list)
+    expect(vms.map(&:last_known_state).uniq).to eq(['running'])
+  end
 end
 
 module IntegrationSandboxHelpers
   def start_sandbox
+    unless sandbox_started?
+      at_exit do
+        begin
+          status = $! ? ($!.is_a?(::SystemExit) ? $!.status : 1) : 0
+          logger.info("\n  Stopping sandboxed environment for BOSH tests...")
+          current_sandbox.stop
+          cleanup_sandbox_dir
+        rescue => e
+          logger.error "Failed to stop sandbox! #{e.message}\n#{e.backtrace.join("\n")}"
+        ensure
+          exit(status)
+        end
+      end
+    end
+
     $sandbox_started = true
 
     logger.info('Starting sandboxed environment for BOSH tests...')
     current_sandbox.start
-
-    at_exit do
-      begin
-        status = $! ? ($!.is_a?(::SystemExit) ? $!.status : 1) : 0
-        logger.info("\n  Stopping sandboxed environment for BOSH tests...")
-        current_sandbox.stop
-        cleanup_sandbox_dir
-      ensure
-        exit(status)
-      end
-    end
   end
 
   def sandbox_started?
@@ -151,6 +167,7 @@ module IntegrationSandboxHelpers
     cleanup_sandbox_dir
     setup_test_release_dir
     setup_bosh_work_dir
+    setup_home_dir
   end
 
   def reset_sandbox(desc)
@@ -158,12 +175,16 @@ module IntegrationSandboxHelpers
     FileUtils.rm_rf(current_sandbox.cloud_storage_dir)
   end
 
-  private
+  def setup_test_release_dir(destination_dir = ClientSandbox.test_release_dir)
+    FileUtils.rm_rf(destination_dir)
+    FileUtils.cp_r(TEST_RELEASE_TEMPLATE, destination_dir, :preserve => true)
 
-  def setup_test_release_dir
-    FileUtils.cp_r(TEST_RELEASE_TEMPLATE, TEST_RELEASE_DIR, :preserve => true)
+    final_config_path = File.join(destination_dir, 'config', 'final.yml')
+    final_config = YAML.load_file(final_config_path)
+    final_config['blobstore']['options']['blobstore_path'] = ClientSandbox.blobstore_dir
+    File.open(final_config_path, 'w') { |file| file.write(YAML.dump(final_config)) }
 
-    Dir.chdir(TEST_RELEASE_DIR) do
+    Dir.chdir(destination_dir) do
       ignore = %w(
         blobs
         dev-releases
@@ -176,6 +197,7 @@ module IntegrationSandboxHelpers
         .final_builds/packages/**/*.tgz
         blobs
         .blobs
+        .DS_Store
       )
 
       File.open('.gitignore', 'w+') do |f|
@@ -190,13 +212,20 @@ module IntegrationSandboxHelpers
     end
   end
 
+  private
+
   def setup_bosh_work_dir
-    FileUtils.cp_r(BOSH_WORK_TEMPLATE, BOSH_WORK_DIR, :preserve => true)
+    FileUtils.cp_r(BOSH_WORK_TEMPLATE, ClientSandbox.bosh_work_dir, :preserve => true)
+  end
+
+  def setup_home_dir
+    FileUtils.mkdir_p(ClientSandbox.home_dir)
+    ENV['HOME'] = ClientSandbox.home_dir
   end
 
   def cleanup_sandbox_dir
-    FileUtils.rm_rf(SANDBOX_DIR)
-    FileUtils.mkdir_p(SANDBOX_DIR)
+    FileUtils.rm_rf(ClientSandbox.base_dir)
+    FileUtils.mkdir_p(ClientSandbox.base_dir)
   end
 end
 

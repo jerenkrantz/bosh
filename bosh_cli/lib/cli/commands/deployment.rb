@@ -81,27 +81,32 @@ module Bosh::Cli::Command
     usage "deploy"
     desc "Deploy according to the currently selected deployment manifest"
     option "--recreate", "recreate all VMs in deployment"
+    option "--redact-diff", "redact manifest value changes in deployment"
     def perform
       auth_required
       recreate = !!options[:recreate]
+      redact_diff = !!options[:redact_diff]
 
       manifest_yaml = prepare_deployment_manifest(
         :yaml => true, :resolve_properties => true)
 
-      if interactive?
-        inspect_deployment_changes(Psych.load(manifest_yaml))
-        say("Please review all changes carefully".make_yellow)
-      end
+      inspect_deployment_changes(Psych.load(manifest_yaml),
+        interactive: interactive?, redact_diff: redact_diff)
+      say('Please review all changes carefully'.make_yellow) if interactive?
 
-      desc = "`#{File.basename(deployment).make_green}' to `#{target_name.make_green}'"
+      deployment_name = File.basename(deployment)
 
-      unless confirmed?("Deploying #{desc}")
+      header('Deploying')
+      say("Deployment name: `#{deployment_name.make_green}'")
+      say("Director name: `#{target_name.make_green}'")
+
+      unless confirmed?('Are you sure you want to deploy?')
         cancel_deployment
       end
 
       status, task_id = director.deploy(manifest_yaml, :recreate => recreate)
 
-      task_report(status, task_id, "Deployed #{desc}")
+      task_report(status, task_id, "Deployed `#{deployment_name.make_green}' to `#{target_name.make_green}'")
     end
 
     # bosh delete deployment
@@ -149,18 +154,13 @@ module Bosh::Cli::Command
       end
 
       say(" - discovering packages")
-      packages = Bosh::Cli::PackageBuilder.discover(
-        work_dir,
-        :dry_run => true,
-        :final => false
-      )
+      packages = Bosh::Cli::Resources::Package.discover(work_dir)
 
       say(" - discovering jobs")
-      jobs = Bosh::Cli::JobBuilder.discover(
+      jobs = Bosh::Cli::Resources::Job.discover(
         work_dir,
-        :dry_run => true,
-        :final => false,
-        :package_names => packages.map {|package| package.name}
+        # TODO: be sure this is covered in integration
+        packages.map {|package| package['name']}
       )
 
       say(" - validating properties")

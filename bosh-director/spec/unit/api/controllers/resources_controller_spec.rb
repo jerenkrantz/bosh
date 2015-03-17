@@ -6,99 +6,73 @@ module Bosh::Director
     describe Controllers::ResourcesController do
       include Rack::Test::Methods
 
-      let!(:temp_dir) { Dir.mktmpdir}
-
-      before do
+      let(:temp_dir) { Dir.mktmpdir}
+      let(:test_config) do
         blobstore_dir = File.join(temp_dir, 'blobstore')
         FileUtils.mkdir_p(blobstore_dir)
 
-        test_config = Psych.load(spec_asset('test-director-config.yml'))
-        test_config['dir'] = temp_dir
-        test_config['blobstore'] = {
-            'provider' => 'local',
-            'options' => {'blobstore_path' => blobstore_dir}
+        config = Psych.load(spec_asset('test-director-config.yml'))
+        config['dir'] = temp_dir
+        config['blobstore'] = {
+          'provider' => 'local',
+          'options' => {'blobstore_path' => blobstore_dir}
         }
-        test_config['snapshots']['enabled'] = true
-        Config.configure(test_config)
-        @director_app = App.new(Config.load_hash(test_config))
+        config['snapshots']['enabled'] = true
+        config
       end
 
-      after do
-        FileUtils.rm_rf(temp_dir)
-      end
+      let(:director_app) { App.new(Config.load_hash(test_config)) }
 
-      def app
-        @rack_app ||= Controller.new
-      end
+      after { FileUtils.rm_rf(temp_dir) }
 
-      def login_as_admin
-        basic_authorize 'admin', 'admin'
-      end
-
-      def login_as(username, password)
-        basic_authorize username, password
-      end
+      let(:existing_resource_id) { director_app.blobstores.blobstore.create('some data') }
+      let(:resource_manager) { ResourceManager.new(director_app.blobstores.blobstore) }
+      subject(:app) { described_class.new(Config.new({}), resource_manager) }
 
       it 'requires auth' do
-        get '/'
-        last_response.status.should == 401
+        get "/#{existing_resource_id}"
+        expect(last_response.status).to eq(401)
       end
 
       it 'sets the date header' do
-        get '/'
-        last_response.headers['Date'].should_not be_nil
+        get "/#{existing_resource_id}"
+        expect(last_response.headers['Date']).not_to be_nil
       end
 
-      it 'allows Basic HTTP Auth with admin/admin credentials for ' +
-             "test purposes (even though user doesn't exist)" do
-        basic_authorize 'admin', 'admin'
-        get '/'
-        last_response.status.should == 404
-      end
+      context 'when authorized' do
+        before(:each) { basic_authorize 'admin', 'admin' }
 
-      context 'when serving resources from temp' do
-        let(:resouce_manager) { instance_double('Bosh::Director::Api::ResourceManager') }
-        let(:tmp_file) { File.join(Dir.tmpdir, "resource-#{SecureRandom.uuid}") }
-
-        def app
-          ResourceManager.stub(new: resouce_manager)
-          Controller.new
+        it '404 on missing resource' do
+          get '/missing_resource'
+          expect(last_response.status).to eq(404)
         end
 
-        before do
-          File.open(tmp_file, 'w') do |f|
-            f.write('some data')
+        it 'can fetch resources from blobstore' do
+          get "/#{existing_resource_id}"
+          expect(last_response.status).to eq(200)
+          expect(last_response.body).to eq('some data')
+        end
+
+        context 'when serving resources from temp' do
+          let(:resource_manager) { instance_double('Bosh::Director::Api::ResourceManager') }
+          let(:tmp_file) { File.join(Dir.tmpdir, "resource-#{SecureRandom.uuid}") }
+
+          before do
+            File.open(tmp_file, 'w') do |f|
+              f.write('some data')
+            end
+
+            FileUtils.touch(tmp_file)
           end
 
-          FileUtils.touch(tmp_file)
-        end
+          it 'cleans up temp file after serving it' do
+            basic_authorize 'admin', 'admin'
+            expect(resource_manager).to receive(:get_resource_path).with('deadbeef').and_return(tmp_file)
 
-        it 'cleans up temp file after serving it' do
-          login_as_admin
-
-          resouce_manager.should_receive(:get_resource_path).with('deadbeef').and_return(tmp_file)
-
-          File.exists?(tmp_file).should be(true)
-          get '/resources/deadbeef'
-          last_response.body.should == 'some data'
-          File.exists?(tmp_file).should be(false)
-        end
-      end
-
-      describe 'API calls' do
-        before(:each) { login_as_admin }
-
-        describe 'resources' do
-          it '404 on missing resource' do
-            get '/resources/deadbeef'
-            last_response.status.should == 404
-          end
-
-          it 'can fetch resources from blobstore' do
-            id = @director_app.blobstores.blobstore.create('some data')
-            get "/resources/#{id}"
-            last_response.status.should == 200
-            last_response.body.should == 'some data'
+            expect(File.exists?(tmp_file)).to be(true)
+            get '/deadbeef'
+            expect(last_response.body).to eq('some data')
+            expect(File.exists?(tmp_file)).to be(false)
           end
         end
       end

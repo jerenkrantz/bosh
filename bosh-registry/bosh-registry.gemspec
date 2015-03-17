@@ -1,6 +1,8 @@
 # coding: utf-8
 require File.expand_path('../lib/bosh/registry/version', __FILE__)
 
+version = Bosh::Registry::VERSION
+
 Gem::Specification.new do |s|
   s.name         = 'bosh-registry'
   s.version      = Bosh::Registry::VERSION
@@ -21,7 +23,16 @@ Gem::Specification.new do |s|
   s.add_dependency 'sequel',    '~>3.43.0'
   s.add_dependency 'sinatra',   '~>1.4.2'
   s.add_dependency 'thin',      '~>1.5.0'
-  s.add_dependency 'yajl-ruby', '~>1.1.0'
-  s.add_dependency 'fog',       '~>1.14.0'
-  s.add_dependency 'aws-sdk',   '1.44.0'
+  s.add_dependency 'yajl-ruby', '~>1.2.0'
+  s.add_dependency 'fog',       '~>1.27.0'
+  s.add_dependency 'aws-sdk',   '1.60.2'
+  s.add_dependency 'bosh_cpi', "~>#{version}"
+
+  s.add_development_dependency 'rake'
+  s.add_development_dependency 'rspec'
+  s.add_development_dependency 'rspec-its'
+  s.add_development_dependency 'mono_logger'
+  s.add_development_dependency 'rack-test'
+  s.add_development_dependency 'sqlite3'
+  s.add_development_dependency 'httpclient'
 end

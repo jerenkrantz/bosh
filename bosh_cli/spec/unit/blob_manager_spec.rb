@@ -1,11 +1,10 @@
-# Copyright (c) 2009-2012 VMware, Inc.
-
 require "spec_helper"
 
 describe Bosh::Cli::BlobManager do
 
-  def make_manager(release)
-    Bosh::Cli::BlobManager.new(release)
+  def make_manager(release, max_parallel_downloads=1, renderer=nil)
+    renderer ||= Bosh::Cli::InteractiveProgressRenderer.new
+    Bosh::Cli::BlobManager.new(release, max_parallel_downloads, renderer)
   end
 
   before(:each) do
@@ -26,23 +25,16 @@ describe Bosh::Cli::BlobManager do
       }.to raise_error("`src' directory is missing")
     end
 
-    it "fails if blobstore is not configured" do
-      @release.stub(:blobstore).and_return(nil)
-      expect {
-        make_manager(@release)
-      }.to raise_error("Blobstore is not configured")
-    end
-
     it "creates necessary directories in release dir" do
       make_manager(@release)
-      File.directory?(File.join(@dir, "blobs")).should be(true)
-      File.directory?(File.join(@dir, ".blobs")).should be(true)
+      expect(File.directory?(File.join(@dir, "blobs"))).to be(true)
+      expect(File.directory?(File.join(@dir, ".blobs"))).to be(true)
     end
 
     it "has dirty flag cleared and upload list empty" do
       manager = make_manager(@release)
-      manager.dirty?.should be(false)
-      manager.blobs_to_upload.should == []
+      expect(manager.dirty?).to be(false)
+      expect(manager.blobs_to_upload).to eq([])
     end
 
     it "doesn't like bad index file'" do
@@ -64,8 +56,8 @@ describe Bosh::Cli::BlobManager do
       end
 
       make_manager(@release)
-      File.exists?(legacy_file).should be(false)
-      Psych.load_file(File.join(@config_dir, "blobs.yml")).should == test_hash
+      expect(File.exists?(legacy_file)).to be(false)
+      expect(Psych.load_file(File.join(@config_dir, "blobs.yml"))).to eq(test_hash)
     end
   end
 
@@ -114,16 +106,16 @@ describe Bosh::Cli::BlobManager do
     it "adds blob to a blobs directory" do
       blob_dst = File.join(@blobs_dir, "foo", "blob")
       @manager.add_blob(@blob.path, "foo/blob")
-      File.exists?(blob_dst).should be(true)
-      File.read(blob_dst).should == "blob contents"
-      File.symlink?(blob_dst).should be(false)
-      File.stat(blob_dst).mode.to_s(8)[-4..-1].should == "0644"
-      File.exists?(@blob.path).should be(true) # original still exists
+      expect(File.exists?(blob_dst)).to be(true)
+      expect(File.read(blob_dst)).to eq("blob contents")
+      expect(File.symlink?(blob_dst)).to be(false)
+      expect(File.stat(blob_dst).mode.to_s(8)[-4..-1]).to eq("0644")
+      expect(File.exists?(@blob.path)).to be(true) # original still exists
 
       @manager.process_blobs_directory
-      @manager.dirty?.should be(true)
-      @manager.new_blobs.should == %w(foo/blob)
-      @manager.updated_blobs.should == []
+      expect(@manager.dirty?).to be(true)
+      expect(@manager.new_blobs).to eq(%w(foo/blob))
+      expect(@manager.updated_blobs).to eq([])
     end
 
     it "prevents double adds of the same file" do
@@ -139,13 +131,21 @@ describe Bosh::Cli::BlobManager do
       new_blob.close
       blob_dst = File.join(@blobs_dir, "foo", "blob")
       @manager.add_blob(@blob.path, "foo/blob")
-      File.read(blob_dst).should == "blob contents"
+      expect(File.read(blob_dst)).to eq("blob contents")
       @manager.add_blob(new_blob.path, "foo/blob")
-      File.read(blob_dst).should == "foobar"
+      expect(File.read(blob_dst)).to eq("foobar")
     end
   end
 
   describe "downloading a blob" do
+    it 'fails if blobstore is not configured' do
+      allow(@release).to receive(:blobstore).and_return(nil)
+
+      expect {
+        make_manager(@release).download_blob('foo')
+      }.to raise_error('Failed to download blobs: blobstore not configured')
+    end
+
     it "cannot download blob if path is not in index" do
       @manager = make_manager(@release)
 
@@ -167,19 +167,31 @@ describe Bosh::Cli::BlobManager do
         Psych.dump(index, f)
       end
 
-      @manager = make_manager(@release)
-      @blobstore
-        .should_receive(:get)
+      renderer = Bosh::Cli::InteractiveProgressRenderer.new
+      expect(renderer).to receive(:progress).at_least(1).times
+      expect(renderer).to receive(:finish).once
+
+      @manager = make_manager(@release, 1, renderer)
+      expect(@blobstore)
+        .to receive(:get)
         .with("deadbeef", an_instance_of(File)) { |_, f | f.write("blob contents") }
 
       path = @manager.download_blob("foo")
-      File.read(path).should == "blob contents"
+      expect(File.read(path)).to eq("blob contents")
     end
   end
 
   describe "uploading a blob" do
     before(:each) do
       @manager = make_manager(@release)
+    end
+
+    it "fails if blobstore is not configured" do
+      allow(@release).to receive(:blobstore).and_return(nil)
+
+      expect {
+        make_manager(@release).upload_blob("foo")
+      }.to raise_error("Failed to upload blobs: blobstore not configured")
     end
 
     it "needs blob path to exist" do
@@ -199,32 +211,38 @@ describe Bosh::Cli::BlobManager do
     it "uploads file to a blobstore, updates index and symlinks blob" do
       new_blob = File.join(@dir, "blob")
       File.open(new_blob, "w") { |f| f.write("test blob") }
+
+      renderer = Bosh::Cli::InteractiveProgressRenderer.new
+      expect(renderer).to receive(:start).once
+      expect(renderer).to receive(:finish).once
+      @manager = make_manager(@release, 1, renderer)
+
       @manager.add_blob(new_blob, "foo")
 
-      @blobstore.should_receive(:create).and_return("deadbeef")
-      @manager.upload_blob("foo").should == "deadbeef"
+      expect(@blobstore).to receive(:create).and_return("deadbeef")
+      expect(@manager.upload_blob("foo")).to eq("deadbeef")
 
       blob_dst = File.join(@blobs_dir, "foo")
       checksum = Digest::SHA1.hexdigest("test blob")
 
-      File.symlink?(blob_dst).should be(true)
-      File.readlink(blob_dst).should == File.join(@dir, ".blobs", checksum)
-      File.read(blob_dst).should == "test blob"
+      expect(File.symlink?(blob_dst)).to be(true)
+      expect(File.readlink(blob_dst)).to eq(File.join(@dir, ".blobs", checksum))
+      expect(File.read(blob_dst)).to eq("test blob")
     end
   end
 
   describe "syncing blobs" do
     it "includes several steps" do
       @manager = make_manager(@release)
-      @manager.should_receive(:remove_symlinks).ordered
-      @manager.should_receive(:process_blobs_directory).ordered
-      @manager.should_receive(:process_index).ordered
+      expect(@manager).to receive(:remove_symlinks).ordered
+      expect(@manager).to receive(:process_blobs_directory).ordered
+      expect(@manager).to receive(:process_index).ordered
       @manager.sync
     end
 
     it "processes blobs directory" do
       @manager = make_manager(@release)
-      @blobstore.stub(:create).and_return("new-object-id")
+      allow(@blobstore).to receive(:create).and_return("new-object-id")
 
       new_blob = Tempfile.new("new-blob")
       new_blob.write("test")
@@ -232,11 +250,11 @@ describe Bosh::Cli::BlobManager do
 
       @manager.add_blob(new_blob.path, "foo")
       @manager.process_blobs_directory
-      @manager.new_blobs.should == %w(foo)
+      expect(@manager.new_blobs).to eq(%w(foo))
 
       @manager.add_blob(new_blob.path, "bar")
       @manager.process_blobs_directory
-      @manager.new_blobs.sort.should == %w(bar foo)
+      expect(@manager.new_blobs.sort).to eq(%w(bar foo))
 
       @manager.upload_blob("bar")
 
@@ -246,8 +264,8 @@ describe Bosh::Cli::BlobManager do
 
       @manager.add_blob(new_blob.path, "bar")
       @manager.process_blobs_directory
-      @manager.new_blobs.sort.should == %w(foo)
-      @manager.updated_blobs.sort.should == %w(bar)
+      expect(@manager.new_blobs.sort).to eq(%w(foo))
+      expect(@manager.updated_blobs.sort).to eq(%w(bar))
     end
 
     it "downloads missing blobs" do
@@ -276,14 +294,18 @@ describe Bosh::Cli::BlobManager do
       bar.write("bar")
       bar.close
 
-      @manager = make_manager(@release)
-      @manager.should_receive(:download_blob).with("foo").and_return(foo.path)
-      @manager.should_receive(:download_blob).with("bar").and_return(bar.path)
+      allow(Bosh::ThreadPool).to receive(:new).and_call_original
+
+      @manager = make_manager(@release, 99)
+      expect(@manager).to receive(:download_blob).with("foo").and_return(foo.path)
+      expect(@manager).to receive(:download_blob).with("bar").and_return(bar.path)
 
       @manager.process_index
 
-      File.read(File.join(@blobs_dir, "foo")).should == "foo"
-      File.read(File.join(@blobs_dir, "bar")).should == "bar"
+      expect(File.read(File.join(@blobs_dir, "foo"))).to eq("foo")
+      expect(File.read(File.join(@blobs_dir, "bar"))).to eq("bar")
+
+      expect(Bosh::ThreadPool).to have_received(:new).with(:max_threads => 99, :logger => kind_of(Logging::Logger))
     end
   end
 end

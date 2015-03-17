@@ -69,6 +69,10 @@ module Bosh::Director
         @reserved_errand_capacity = 0
       end
 
+      def vms
+        @allocated_vms + @idle_vms
+      end
+
       # Returns resource pools spec as Hash (usually for agent to serialize)
       # @return [Hash] Resource pool spec
       def spec
@@ -94,12 +98,24 @@ module Bosh::Director
         end
       end
 
+      # Attempts to allocate a dynamic IP addresses for all VMs
+      # (unless they already have one).
+      def reserve_dynamic_networks
+        vms.each do |vm|
+          unless vm.has_network_reservation?
+            instance = vm.bound_instance
+            origin = instance ? "Job instance `#{instance}' in resource pool `#{@name}'" : nil
+            vm.network_reservation = reserve_dynamic_network(origin)
+          end
+        end
+      end
+
       # Tries to obtain one dynamic reservation in its own network
       # @raise [NetworkReservationError]
       # @return [NetworkReservation] Obtained reservation
-      def reserve_dynamic_network
+      def reserve_dynamic_network(origin="Resource pool `#{@name}'")
         reservation = NetworkReservation.new_dynamic
-        @network.reserve!(reservation, "Resource pool `#{@name}'")
+        @network.reserve!(reservation, origin)
         reservation
       end
 
@@ -119,15 +135,11 @@ module Bosh::Director
           raise ResourcePoolNotEnoughCapacity, "Resource pool `#{@name}' has no more VMs to allocate" if vm.nil?
         end
 
-        add_allocated_vm(vm)
+        register_allocated_vm(vm)
       end
 
-      # Adds an existing VM to allocated_vms
-      def add_allocated_vm(vm=nil)
-        vm ||= Vm.new(self)
-        @logger.info("ResourcePool `#{name}' - Adding allocated VM (index=#{@allocated_vms.size})")
-        @allocated_vms << vm
-        vm
+      def add_allocated_vm
+        register_allocated_vm(Vm.new(self))
       end
 
       def deallocate_vm(vm_cid)
@@ -138,6 +150,8 @@ module Bosh::Director
 
         @logger.info("ResourcePool `#{name}' - Deallocating VM: #{deallocated_vm.model.cid}")
         @allocated_vms.delete(deallocated_vm)
+
+        deallocated_vm.release_reservation
 
         add_idle_vm unless dynamically_sized? # don't refill if dynamically sized
 
@@ -182,6 +196,12 @@ module Bosh::Director
       end
 
       private
+      # Adds an existing VM to allocated_vms
+      def register_allocated_vm(vm)
+        @logger.info("ResourcePool `#{name}' - Adding allocated VM (index=#{@allocated_vms.size})")
+        @allocated_vms << vm
+        vm
+      end
 
       def dynamically_sized?
         @size.nil?

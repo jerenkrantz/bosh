@@ -6,14 +6,28 @@ module Bosh::Stemcell
   module Aws
     describe LightStemcell do
       let(:stemcell) do
-        Bosh::Stemcell::Archive.new(spec_asset('fake-stemcell-aws.tgz'))
+        Bosh::Stemcell::Archive.new(spec_asset('fake-stemcell-aws-xen-ubuntu.tgz'))
       end
+
+      let(:virtualization_type) { "paravirtual" }
 
       subject(:light_stemcell) do
-        LightStemcell.new(stemcell)
+        LightStemcell.new(stemcell, virtualization_type)
       end
 
-      its(:path) { should eq(spec_asset('light-fake-stemcell-aws.tgz')) }
+      describe "#path" do
+        subject { light_stemcell.path }
+
+        context 'when virtualization type is paravirtual' do
+          let(:virtualization_type) { "paravirtual" }
+          it { should eq(spec_asset('light-fake-stemcell-aws-xen-ubuntu.tgz')) }
+        end
+
+        context 'when virtualization type is hvm' do
+          let(:virtualization_type) { Bosh::Stemcell::Aws::HVM_VIRTUALIZATION }
+          it { should eq(spec_asset('light-fake-stemcell-aws-xen-hvm-ubuntu.tgz')) }
+        end
+      end
 
       describe '#write_archive' do
         let(:region) do
@@ -25,16 +39,16 @@ module Bosh::Stemcell
         end
 
         let(:stemcell) do
-          Bosh::Stemcell::Archive.new(spec_asset('fake-stemcell-aws.tgz'))
+          Bosh::Stemcell::Archive.new(spec_asset('fake-stemcell-aws-xen-ubuntu.tgz'))
         end
 
         subject(:light_stemcell) do
-          LightStemcell.new(stemcell)
+          LightStemcell.new(stemcell, virtualization_type)
         end
 
         before do
           allow(Region).to receive(:new).and_return(region)
-          allow(Ami).to receive(:new).with(stemcell, region).and_return(ami)
+          allow(Ami).to receive(:new).with(stemcell, region, virtualization_type).and_return(ami)
           allow(Rake::FileUtilsExt).to receive(:sh)
           allow(FileUtils).to receive(:touch)
         end
@@ -50,7 +64,7 @@ module Bosh::Stemcell
             expect(command).to match(/tar xzf #{stemcell.path} --directory .*/)
           end
 
-          expected_tarfile = File.join(File.dirname(stemcell.path), 'light-fake-stemcell-aws.tgz')
+          expected_tarfile = File.join(File.dirname(stemcell.path), 'light-fake-stemcell-aws-xen-ubuntu.tgz')
 
           expect(Rake::FileUtilsExt).to receive(:sh) do |command|
             expect(command).to match(/sudo tar cvzf #{expected_tarfile} \*/)
@@ -68,11 +82,41 @@ module Bosh::Stemcell
         end
 
         it 'adds the ami to the stemcell manifest' do
-          expect(Psych).to receive(:dump) do |stemcell_properties, out|
+          expect(Psych).to receive(:dump) do |stemcell_properties, _|
             expect(stemcell_properties['cloud_properties']['ami']).to eq({ 'fake-region' => 'fake-ami-id' })
           end
 
           light_stemcell.write_archive
+        end
+
+        context 'when the virtualization is hvm' do
+          let(:virtualization_type) { Bosh::Stemcell::Aws::HVM_VIRTUALIZATION }
+          it 'replaces the name in the manifest when it is a hvm virtualization' do
+            stemcell.manifest['name'] = 'xen-fake-stemcell'
+            expect(Psych).to receive(:dump) do |stemcell_properties, _|
+              expect(stemcell_properties['name']).to eq('xen-hvm-fake-stemcell')
+            end
+            light_stemcell.write_archive
+          end
+
+          it 'replaces the cloud_properties name in the manifest when it is a hvm virtualization' do
+            stemcell.manifest['cloud_properties']['name'] = 'xen-fake-stemcell'
+            expect(Psych).to receive(:dump) do |stemcell_properties, _|
+              expect(stemcell_properties['cloud_properties']['name']).to eq('xen-hvm-fake-stemcell')
+            end
+            light_stemcell.write_archive
+          end
+        end
+
+        context 'when the virtualization is not hvm' do
+          let(:virtualization_type) { 'non-hvm' }
+          it 'does not replace the name in the manifest' do
+            stemcell.manifest['name'] = 'xen-fake-stemcell'
+            expect(Psych).to receive(:dump) do |stemcell_properties, _|
+              expect(stemcell_properties['name']).to eq('xen-fake-stemcell')
+            end
+            light_stemcell.write_archive
+          end
         end
 
         it 'names the stemcell manifest correctly' do

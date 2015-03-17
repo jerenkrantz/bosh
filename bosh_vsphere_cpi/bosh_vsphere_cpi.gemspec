@@ -15,7 +15,7 @@ Gem::Specification.new do |s|
   s.email       = 'support@cloudfoundry.com'
   s.required_ruby_version = Gem::Requirement.new('>= 1.9.3')
 
-  s.files        = `git ls-files -- db/* lib/*`.split("\n") + %w(README)
+  s.files        = `git ls-files -- lib/*`.split("\n")
   s.require_path = 'lib'
   s.bindir       = 'bin'
 
@@ -23,11 +23,17 @@ Gem::Specification.new do |s|
 
   s.add_dependency 'bosh_common', "~>#{version}"
   s.add_dependency 'bosh_cpi',    "~>#{version}"
-  s.add_dependency 'membrane',    '~>0.0.2'
-  s.add_dependency 'sequel',      '~>3.43.0'
-  s.add_dependency 'pg',          '~>0.15.1'
-  s.add_dependency 'mysql2',      '~>0.3.11'
+  s.add_dependency 'membrane',    '~>1.1.0'
   s.add_dependency 'builder',     '~>3.1.4'
   s.add_dependency 'nokogiri',    '~>1.5.10'
   s.add_dependency 'httpclient',  '=2.4.0'
+  s.add_dependency 'mono_logger', '~>1.1.0'
+
+  s.add_development_dependency 'timecop', '~>0.7.1'
+  s.add_development_dependency 'rake', '~>10.0'
+  s.add_development_dependency 'rspec', '~> 3.0'
+  s.add_development_dependency 'rspec-its'
+  s.add_development_dependency 'rspec-instafail'
+  s.add_development_dependency 'sqlite3'
+  s.add_development_dependency 'fakefs'
 end

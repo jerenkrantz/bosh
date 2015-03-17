@@ -40,9 +40,14 @@ module Bosh::Stemcell
       }.to raise_error /key not found: :default_disk_size/
     end
 
-    it 'defaults to not supporting light stemcells' do
-      infrastructure = Infrastructure::Base.new(name: 'foo', hypervisor: 'bar', default_disk_size: 1024)
-      expect(infrastructure).not_to be_light
+    it 'defaults to no additional cloud properties' do
+      infrastructure = Infrastructure::Base.new(
+        name: 'foo',
+        hypervisor: 'xen',
+        default_disk_size: 1024,
+        disk_formats: []
+      )
+      expect(infrastructure.additional_cloud_properties).to eq({})
     end
   end
 
@@ -59,10 +64,6 @@ module Bosh::Stemcell
       expect(subject.default_disk_size).to eq(-1)
     end
 
-    it 'does not support light stemcells' do
-      expect(subject).to_not be_light
-    end
-
     it 'is comparable to other infrastructures' do
       expect(subject).to eq(Infrastructure.for('null'))
 
@@ -70,42 +71,71 @@ module Bosh::Stemcell
       expect(subject).to_not eq(Infrastructure.for('aws'))
       expect(subject).to_not eq(Infrastructure.for('vsphere'))
     end
+
+    it 'defaults to no additional cloud properties' do
+      infrastructure = Infrastructure::Base.new(
+        name: 'foo',
+        hypervisor: 'xen',
+        default_disk_size: 1024,
+        disk_formats: []
+      )
+      expect(infrastructure.additional_cloud_properties).to eq({})
+    end
   end
 
   describe Infrastructure::Aws do
     its(:name)              { should eq('aws') }
     its(:hypervisor)        { should eq('xen') }
     its(:default_disk_size) { should eq(2048) }
-    it { should be_light }
+    its(:disk_formats)      { should eq(['raw']) }
 
     it { should eq Infrastructure.for('aws') }
     it { should_not eq Infrastructure.for('openstack') }
+
+    it 'has aws specific additional cloud properties' do
+      expect(subject.additional_cloud_properties).to eq({'root_device_name' => '/dev/sda1'})
+    end
   end
 
   describe Infrastructure::OpenStack do
     its(:name)              { should eq('openstack') }
     its(:hypervisor)        { should eq('kvm') }
-    its(:default_disk_size) { should eq(10240) }
-    it { should_not be_light }
+    its(:default_disk_size) { should eq(3072) }
+    its(:disk_formats) {should eq(['qcow2', 'raw'])}
 
     it { should eq Infrastructure.for('openstack') }
     it { should_not eq Infrastructure.for('vsphere') }
+
+    it 'has openstack specific additional cloud properties' do
+      expect(subject.additional_cloud_properties).to eq({'auto_disk_config' => true})
+    end
   end
 
   describe Infrastructure::Vsphere do
     its(:name)              { should eq('vsphere') }
     its(:hypervisor)        { should eq('esxi') }
     its(:default_disk_size) { should eq(3072) }
-    it { should_not be_light }
+    its(:disk_formats)      { should eq(['ovf']) }
 
     it { should eq Infrastructure.for('vsphere') }
     it { should_not eq Infrastructure.for('aws') }
+
+    it 'has vsphere specific additional cloud properties' do
+      expect(subject.additional_cloud_properties).to eq({'root_device_name' => '/dev/sda1'})
+    end
   end
 
   describe Infrastructure::Vcloud do
     its(:name)              { should eq('vcloud') }
     its(:hypervisor)        { should eq('esxi') }
     its(:default_disk_size) { should eq(3072) }
-    it { should_not be_light }
+    its(:disk_formats)      { should eq(['ovf']) }
+
+    it { should eq Infrastructure.for('vcloud') }
+    it { should_not eq Infrastructure.for('vsphere') }
+
+    it 'has vcloud specific additional cloud properties' do
+      expect(subject.additional_cloud_properties).to eq({'root_device_name' => '/dev/sda1'})
+    end
   end
 end

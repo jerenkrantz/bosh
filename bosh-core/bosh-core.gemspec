@@ -19,5 +19,9 @@ Gem::Specification.new do |spec|
   spec.require_paths = %w[lib]
 
   spec.add_dependency 'gibberish', '~>1.2.0'
-  spec.add_dependency 'yajl-ruby', '~>1.1.0'
+  spec.add_dependency 'yajl-ruby', '~>1.2.0'
+
+  spec.add_development_dependency 'rspec', '~> 3.0'
+  spec.add_development_dependency 'rspec-its'
+  spec.add_development_dependency 'rspec-instafail'
 end

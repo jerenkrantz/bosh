@@ -4,8 +4,8 @@ require 'bosh/stemcell/aws/light_stemcell'
 
 module Bosh::Dev
   class StemcellPublisher
-    def self.for_candidate_build
-      new(Build.candidate)
+    def self.for_candidate_build(bucket_name)
+      new(Build.candidate bucket_name)
     end
 
     def initialize(build)
@@ -21,11 +21,13 @@ module Bosh::Dev
     private
 
     def publish_light_stemcell(stemcell)
-      light_stemcell = Bosh::Stemcell::Aws::LightStemcell.new(stemcell)
-      light_stemcell.write_archive
+      %w{ paravirtual hvm }.each { |virtualization_type|
+        light_stemcell = Bosh::Stemcell::Aws::LightStemcell.new(stemcell, virtualization_type)
+        light_stemcell.write_archive
 
-      light_stemcell_stemcell = Bosh::Stemcell::Archive.new(light_stemcell.path)
-      @build.upload_stemcell(light_stemcell_stemcell)
+        light_stemcell_stemcell = Bosh::Stemcell::Archive.new(light_stemcell.path)
+        @build.upload_stemcell(light_stemcell_stemcell)
+      }
     end
   end
 end

@@ -26,6 +26,9 @@ module Bosh::Aws
     let(:misc_command) { instance_double('Bosh::Cli::Command::Misc', options: {}).as_null_object }
     before { allow(Bosh::Cli::Command::Misc).to receive(:new).and_return(misc_command) }
 
+    let(:login_command) { instance_double('Bosh::Cli::Command::Login', options: {}).as_null_object }
+    before { allow(Bosh::Cli::Command::Login).to receive(:new).and_return(login_command) }
+
     describe '#start' do
       context 'stemcell exists on director' do
         before do
@@ -75,8 +78,8 @@ module Bosh::Aws
 
             expect(s3).to have_received(:copy_remote_file).with('bosh-jenkins-artifacts', 'bosh-stemcell/aws/fake-stemcell-archive-filename', 'bosh_stemcell.tgz')
 
-            expect(Bosh::Stemcell::ArchiveFilename).to have_received(:new).with('latest', definition, 'bosh-stemcell', true)
-            expect(Bosh::Stemcell::Definition).to have_received(:for).with('aws', 'ubuntu', 'lucid', 'go')
+            expect(Bosh::Stemcell::ArchiveFilename).to have_received(:new).with('latest', definition, 'bosh-stemcell', 'raw')
+            expect(Bosh::Stemcell::Definition).to have_received(:for).with('aws', 'xen', 'ubuntu', 'trusty', 'go', true)
             expect(stemcell_command).to have_received(:upload).with(stemcell_path)
             expect(Bosh::Stemcell::Archive).to have_received(:new).with(stemcell_path)
           end

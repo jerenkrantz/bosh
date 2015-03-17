@@ -31,6 +31,7 @@ module Bosh::Director
         @release_version_model = nil
 
         @rebase = !!options['rebase']
+        @skip_if_exists = !!options['skip_if_exists']
 
         @manifest = nil
         @name = nil
@@ -138,6 +139,10 @@ module Bosh::Director
           if @release_version_model.errors[:version] == [:format]
             raise ReleaseVersionInvalid,
               "Release version invalid `#{@name}/#{@version}'"
+          elsif @skip_if_exists
+            event_log.begin_stage("Release already exists", 1)
+            event_log.track("#{@name}/#{@version}") {}
+            return
           else
             raise ReleaseAlreadyExists,
               "Release `#{@name}/#{@version}' already exists"
@@ -176,22 +181,18 @@ module Bosh::Director
           packages_by_name[package["name"]] = package
           package["dependencies"] ||= []
         end
+        logger.info("Resolving package dependencies for #{packages_by_name.keys.inspect}")
+
         dependency_lookup = lambda do |package_name|
           packages_by_name[package_name]["dependencies"]
         end
-        result = CycleHelper.check_for_cycle(packages_by_name.keys,
-                                             :connected_vertices => true,
-                                             &dependency_lookup)
+        result = Bosh::Director::CycleHelper.check_for_cycle(packages_by_name.keys, :connected_vertices => true, &dependency_lookup)
 
         packages.each do |package|
           name = package["name"]
           dependencies = package["dependencies"]
-
-          logger.info("Resolving package dependencies for `#{name}', " +
-                      "found: #{dependencies.pretty_inspect}")
-          package["dependencies"] = result[:connected_vertices][name]
-          logger.info("Resolved package dependencies for `#{name}', " +
-                      "to: #{dependencies.pretty_inspect}")
+          all_dependencies = result[:connected_vertices][name]
+          logger.info("Resolved package dependencies for `#{name}': #{dependencies.pretty_inspect} => #{all_dependencies.pretty_inspect}")
         end
       end
 
@@ -222,9 +223,17 @@ module Bosh::Director
           end
 
           if existing_package
+            # clean up 'broken' dependency_set (a bug was including transitives)
+            # dependency ordering impacts fingerprint
+            # TODO: The following code can be removed after some reasonable time period (added 2014.10.06)
+            if existing_package.dependency_set != package_meta['dependencies']
+              existing_package.dependency_set = package_meta['dependencies']
+              existing_package.save
+            end
+
             existing_packages << [existing_package, package_meta]
           else
-            # We found a package with the same checksum but different
+            # We found a package with the same fingerprint but different
             # (release, name, version) tuple, so we need to make a copy
             # of the package blob and create a new db entry for it
             package = packages.first
@@ -429,14 +438,21 @@ module Bosh::Director
         template.blobstore_id = BlobUtil.create_blob(job_tgz)
 
         package_names = []
-        job_manifest["packages"].each do |package_name|
-          package = @packages[package_name]
-          if package.nil?
-            raise JobMissingPackage,
-                  "Job `#{template.name}' is referencing " +
-                  "a missing package `#{package_name}'"
+        if job_manifest["packages"]
+          unless job_manifest["packages"].is_a?(Array)
+            raise JobInvalidPackageSpec,
+                  "Job `#{template.name}' has invalid package spec format"
           end
-          package_names << package.name
+
+          job_manifest["packages"].each do |package_name|
+            package = @packages[package_name]
+            if package.nil?
+              raise JobMissingPackage,
+                "Job `#{template.name}' is referencing " +
+                  "a missing package `#{package_name}'"
+            end
+            package_names << package.name
+          end
         end
         template.package_names = package_names
 

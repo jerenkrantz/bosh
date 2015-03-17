@@ -15,7 +15,7 @@ Gem::Specification.new do |s|
   s.email        = 'support@cloudfoundry.com'
   s.required_ruby_version = Gem::Requirement.new('>= 1.9.3')
 
-  s.files        = `git ls-files -- lib/*`.split("\n") + %w(README)
+  s.files        = `git ls-files -- lib/*`.split("\n")
   s.require_path = 'lib'
   s.bindir       = 'bin'
   s.executables  = %w(bosh-release)
@@ -24,6 +24,10 @@ Gem::Specification.new do |s|
   s.add_dependency 'blobstore_client', "~>#{version}"
   s.add_dependency 'bosh_common',      "~>#{version}"
   s.add_dependency 'bosh-template',    "~>#{version}"
-  s.add_dependency 'yajl-ruby', '~>1.1.0'
+  s.add_dependency 'yajl-ruby', '~>1.2.0'
   s.add_dependency 'trollop',   '~>1.16'
+
+  s.add_development_dependency 'rake'
+  s.add_development_dependency 'rspec'
+  s.add_development_dependency 'rspec-its'
 end

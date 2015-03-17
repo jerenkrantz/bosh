@@ -2,21 +2,20 @@ module Bosh::Director
   module Api
     module Controllers
       class BaseController < Sinatra::Base
-        PUBLIC_URLS = %w(/info)
-
         include ApiHelper
         include Http
         include DnsHelper
 
-        def initialize(*_)
-          super
+        def initialize(config)
+          super()
+          @config = config
+          @identity_provider = config.identity_provider
           @deployment_manager = DeploymentManager.new
           @backup_manager = BackupManager.new
           @instance_manager = InstanceManager.new
           @resurrector_manager = ResurrectorManager.new
           @problem_manager = ProblemManager.new
           @property_manager = PropertyManager.new
-          @resource_manager = ResourceManager.new
           @release_manager = ReleaseManager.new
           @snapshot_manager = SnapshotManager.new
           @stemcell_manager = StemcellManager.new
@@ -28,6 +27,8 @@ module Bosh::Director
 
         mime_type :tgz,       'application/x-compressed'
         mime_type :multipart, 'multipart/form-data'
+
+        attr_reader :identity_provider
 
         def self.consumes(*types)
           types = Set.new(types)
@@ -41,23 +42,23 @@ module Bosh::Director
           end
         end
 
-        def authenticate(user, password)
-          if @user_manager.authenticate(user, password)
-            @user = user
-            true
-          else
-            false
-          end
+        def requires_authentication?
+          true
         end
-
-        helpers ControllerHelpers
 
         before do
           auth_provided = %w(HTTP_AUTHORIZATION X-HTTP_AUTHORIZATION X_HTTP_AUTHORIZATION).detect do |key|
             request.env.has_key?(key)
           end
 
-          protected! if auth_provided || !PUBLIC_URLS.include?(request.path_info)
+          if auth_provided || requires_authentication?
+            begin
+              @user = @identity_provider.corroborate_user(request.env)
+            rescue AuthenticationError => e
+              response['WWW-Authenticate'] = 'Basic realm="BOSH Director"'
+              throw(:halt, [401, "Not authorized\n"])
+            end
+          end
         end
 
         after { headers('Date' => Time.now.rfc822) } # As thin doesn't inject date

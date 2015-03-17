@@ -12,7 +12,7 @@ module Bosh::Dev::Openstack
   class RunnerBuilder
     def build(artifacts, net_type)
       env    = ENV
-      logger = Logger.new(STDOUT)
+      logger = Logging.logger(STDOUT)
 
       director_address = Bosh::Dev::Bat::DirectorAddress.from_env(env, 'BOSH_OPENSTACK_VIP_DIRECTOR_IP')
       bosh_cli_session = Bosh::Dev::BoshCliSession.default
@@ -22,11 +22,16 @@ module Bosh::Dev::Openstack
       microbosh_deployment_manifest =
         MicroBoshDeploymentManifest.new(env, net_type)
 
-      bat_deployment_manifest =
-        BatDeploymentManifest.new(env, net_type, director_uuid, stemcell_archive)
+      bat_deployment_spec_path = env['BOSH_OPENSTACK_BAT_DEPLOYMENT_SPEC']
+      raise 'Missing env var: BOSH_OPENSTACK_BAT_DEPLOYMENT_SPEC' unless bat_deployment_spec_path
 
-      microbosh_deployment_cleaner =
-        MicroBoshDeploymentCleaner.new(microbosh_deployment_manifest)
+      bat_deployment_manifest = BatDeploymentManifest.load_from_file(bat_deployment_spec_path)
+      bat_deployment_manifest.net_type = net_type
+      bat_deployment_manifest.director_uuid = director_uuid
+      bat_deployment_manifest.stemcell = stemcell_archive
+      bat_deployment_manifest.validate
+
+      microbosh_deployment_cleaner = MicroBoshDeploymentCleaner.new(microbosh_deployment_manifest)
 
       # rubocop:disable ParameterLists
       Bosh::Dev::Bat::Runner.new(

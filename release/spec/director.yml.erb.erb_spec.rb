@@ -15,7 +15,7 @@ describe 'director.yml.erb.erb' do
         'blobstore' => {
           'address' => '10.10.0.7',
           'port' => 25251,
-          'agent' => {'user' => 'agent', 'password' => '75d1605f59b60'},
+          'agent' => { 'user' => 'agent', 'password' => '75d1605f59b60' },
           'director' => {
             'user' => 'user',
             'password' => 'password'
@@ -50,6 +50,7 @@ describe 'director.yml.erb.erb' do
           },
           'auto_fix_stateful_nodes' => true,
           'max_vm_create_tries' => 5,
+          'user_management' => { 'provider' => 'local' },
         }
       }
     }
@@ -62,7 +63,48 @@ describe 'director.yml.erb.erb' do
     YAML.load(ERB.new(erb_yaml).result(binding))
   end
 
-  context 'vsphere' do
+  it 'raises an error when no cloud provider is configured' do
+    expect { parsed_yaml }.to raise_error('Could not find cloud plugin')
+  end
+
+  context 'given a generally valid manifest' do
+    before do
+      deployment_manifest_fragment['properties']['aws'] = {
+        'access_key_id' => 'key',
+        'secret_access_key' => 'secret',
+        'default_key_name' => 'default_key_name',
+        'default_security_groups' => 'default_security_groups',
+        'region' => 'region',
+      }
+      deployment_manifest_fragment['properties']['registry'] = {
+        'address' => 'address',
+        'http' => {
+          'port' => 'port',
+          'user' => 'user',
+          'password' => 'password'
+        }
+      }
+    end
+
+    context 'and when configured with a blobstore_path' do
+      before do
+        deployment_manifest_fragment['properties']['compiled_package_cache']['options'] = {
+          'blobstore_path' => '/some/path'
+        }
+      end
+
+      it 'sets the compiled_package_cache fields appropriately' do
+        expect(parsed_yaml['compiled_package_cache']).to eq({
+          'provider' => 'local',
+          'options' => {
+            'blobstore_path' => '/some/path'
+          }
+        })
+      end
+    end
+  end
+
+  context 'when configured for vsphere' do
     before do
       deployment_manifest_fragment['properties']['vcenter'] = {
         'address' => 'vcenter.address',
@@ -73,7 +115,8 @@ describe 'director.yml.erb.erb' do
             'name' => 'vcenter.datacenters.first.name',
             'clusters' => ['cluster1']
           },
-        ]}
+        ]
+      }
     end
 
     context 'when vcenter.address begins with a bang and contains quotes' do
@@ -107,7 +150,7 @@ describe 'director.yml.erb.erb' do
     end
   end
 
-  context 'vcloud' do
+  context 'when configured for vcloud' do
     before do
       deployment_manifest_fragment['properties']['vcd'] = {
         'url' => 'myvcdurl',
@@ -167,7 +210,7 @@ describe 'director.yml.erb.erb' do
     end
   end
 
-  context 'openstack' do
+  context 'when configured for openstack' do
     before do
       deployment_manifest_fragment['properties']['openstack'] = {
         'auth_url' => 'auth_url',
@@ -176,7 +219,11 @@ describe 'director.yml.erb.erb' do
         'tenant' => 'tenant',
         'default_key_name' => 'default_key_name',
         'default_security_groups' => 'default_security_groups',
-        'wait_resource_poll_interval' => 'wait_resource_poll_interval'
+        'wait_resource_poll_interval' => 'wait_resource_poll_interval',
+        'config_drive' => 'config-drive-value',
+        'boot_volume_cloud_properties' => {
+          'type' => 'SSD'
+        },
       }
       deployment_manifest_fragment['properties']['registry'] = {
         'address' => 'address',
@@ -191,135 +238,92 @@ describe 'director.yml.erb.erb' do
     context 'when openstack connection options exist' do
       before do
         deployment_manifest_fragment['properties']['openstack']['connection_options'] = {
-          'option1' => 'true', 'option2' => 'false'}
+          'option1' => 'true', 'option2' => 'false' }
       end
 
       it 'renders openstack connection options correctly' do
         expect(parsed_yaml['cloud']['properties']['openstack']['connection_options']).to eq(
-          {'option1' => 'true', 'option2' => 'false'})
+          { 'option1' => 'true', 'option2' => 'false' })
       end
+    end
+
+    it 'renders openstack properties' do
+      expect(parsed_yaml['cloud']['properties']['openstack']).to eq({
+        'auth_url' => 'auth_url',
+        'username' => 'username',
+        'api_key' => 'api_key',
+        'tenant' => 'tenant',
+        'default_key_name' => 'default_key_name',
+        'default_security_groups' => 'default_security_groups',
+        'wait_resource_poll_interval' => 'wait_resource_poll_interval',
+        'config_drive' => 'config-drive-value',
+        'boot_volume_cloud_properties' => {
+          'type' => 'SSD'
+        },
+      })
     end
   end
 
-  context 's3' do
+  context 'when configured for aws' do
     before do
       deployment_manifest_fragment['properties']['aws'] = {
         'access_key_id' => 'key',
         'secret_access_key' => 'secret',
         'default_key_name' => 'default_key_name',
         'default_security_groups' => 'default_security_groups',
-        'region' => 'region'
+        'region' => 'region',
+        'ec2_endpoint' => 'some_ec2_endpoint',
+        'elb_endpoint' => 'some_elb_endpoint',
+        'max_retries' => 3,
+        'http_read_timeout' => 300,
+        'http_wire_trace' => true,
+        'ssl_verify_peer' => false,
+        'ssl_ca_file' => '/custom/cert/ca-certificates',
+        'ssl_ca_path' => '/custom/cert/'
       }
-
       deployment_manifest_fragment['properties']['registry'] = {
-        'address' => 'aws-registry.example.com',
+        'address' => 'address',
         'http' => {
-          'port' => '1234',
-          'user' => 'aws.user',
-          'password' => 'aws.password'
+          'port' => 'port',
+          'user' => 'user',
+          'password' => 'password'
         }
+      }
+      deployment_manifest_fragment['properties']['director']['user_management'] = {
+        'provider' => 'uaa',
+        'options' => { 'a' => 'b' },
       }
     end
 
-    context 'when the user specifies use_ssl, ssl_verify_peer, s3_multipart_threshold, port, s3_force_path_style and host' do
-      before do
-        blobstore_options = {
-          'provider' => 's3',
-          'bucket_name' => 'mybucket',
-          'access_key_id' => 'key',
-          'secret_access_key' => 'secret',
-          'use_ssl' => false,
-          'ssl_verify_peer' => false,
-          's3_multipart_threshold' => 123,
-          's3_port' => 5155,
-          'host' => 'myhost.hostland.edu',
-          's3_force_path_style' => true,
-        }
-
-        deployment_manifest_fragment['properties']['blobstore'] = blobstore_options
-        deployment_manifest_fragment['properties']['compiled_package_cache']['options'] = blobstore_options
-      end
-
-      it 'sets the blobstore fields appropriately' do
-        [ parsed_yaml['blobstore'], parsed_yaml['compiled_package_cache'] ].each do |blobstore|
-          expect(blobstore['options']).to eq({
-            'bucket_name' => 'mybucket',
-            'access_key_id' => 'key',
-            'secret_access_key' => 'secret',
-            'use_ssl' => false,
-            'ssl_verify_peer' => false,
-            's3_multipart_threshold' => 123,
-            'port' => 5155,
-            'host' => 'myhost.hostland.edu',
-            's3_force_path_style' => true,
-          })
-        end
-      end
-
-      it 'sets endpoint protocol appropriately when use_ssl is true' do
-        deployment_manifest_fragment['properties']['blobstore']['use_ssl'] = true
-
-        expect(parsed_yaml['blobstore']['options']).to eq({
-          'bucket_name' => 'mybucket',
-          'access_key_id' => 'key',
-          'secret_access_key' => 'secret',
-          'use_ssl' => true,
-          'ssl_verify_peer' => false,
-          's3_multipart_threshold' => 123,
-          'port' => 5155,
-          'host' => 'myhost.hostland.edu',
-          's3_force_path_style' => true,
-        })
-      end
-
-      describe 'the agent blobstore' do
-        it 'has the same config as the toplevel blobstore' do
-          expect(parsed_yaml['cloud']['properties']['agent']['blobstore']['options']).to eq({
-            'bucket_name' => 'mybucket',
-            'access_key_id' => 'key',
-            'secret_access_key' => 'secret',
-            'use_ssl' => false,
-            'ssl_verify_peer' => false,
-            's3_multipart_threshold' => 123,
-            'port' => 5155,
-            'host' => 'myhost.hostland.edu',
-            's3_force_path_style' => true,
-          })
-        end
-
-        context 'when there are override values for the agent' do
-          before do
-            deployment_manifest_fragment['properties']['agent'] = {
-              'blobstore' => {
-                'access_key_id' => 'agent-key',
-                'secret_access_key' => 'agent-secret',
-                'host' => 'fakehost.example.com',
-                'use_ssl' => true,
-                'ssl_verify_peer' => true,
-                's3_force_path_style' => false,
-                's3_multipart_threshold' => 456,
-              }
-            }
-          end
-
-          it 'uses the override values' do
-            expect(parsed_yaml['cloud']['properties']['agent']['blobstore']['options']).to eq({
-              'bucket_name' => 'mybucket',
-              'access_key_id' => 'agent-key',
-              'secret_access_key' => 'agent-secret',
-              'use_ssl' => true,
-              'ssl_verify_peer' => true,
-              's3_force_path_style' => false,
-              's3_multipart_threshold' => 456,
-              'port' => 5155,
-              'host' => 'fakehost.example.com',
-            })
-          end
-        end
-      end
+    it 'sets plugin to aws' do
+      expect(parsed_yaml['cloud']).to include({
+        'plugin' => 'aws'
+      })
     end
 
-    context 'when the user only specifies bucket, access, and secret' do
+    it 'sets the user_management provider' do
+      expect(parsed_yaml['user_management']).to eq('provider' => 'uaa', 'options' => {'a' => 'b'})
+    end
+
+    it 'renders aws properties' do
+      expect(parsed_yaml['cloud']['properties']['aws']).to eq({
+        'access_key_id' => 'key',
+        'secret_access_key' => 'secret',
+        'default_key_name' => 'default_key_name',
+        'default_security_groups' => 'default_security_groups',
+        'region' => 'region',
+        'ec2_endpoint' => 'some_ec2_endpoint',
+        'elb_endpoint' => 'some_elb_endpoint',
+        'max_retries' => 3,
+        'http_read_timeout' => 300,
+        'http_wire_trace' => true,
+        'ssl_verify_peer' => false,
+        'ssl_ca_file' => '/custom/cert/ca-certificates',
+        'ssl_ca_path' => '/custom/cert/'
+      })
+    end
+
+    context 'and using an s3 blobstore' do
       before do
         deployment_manifest_fragment['properties']['blobstore'] = {
           'provider' => 's3',
@@ -365,39 +369,109 @@ describe 'director.yml.erb.erb' do
           end
         end
       end
+
+      context 'when the user specifies use_ssl, ssl_verify_peer, s3_multipart_threshold, port, s3_force_path_style and host' do
+        before do
+          deployment_manifest_fragment['properties']['blobstore'].merge!({
+            'use_ssl' => false,
+            'ssl_verify_peer' => false,
+            's3_multipart_threshold' => 123,
+            's3_port' => 5155,
+            'host' => 'myhost.hostland.edu',
+            's3_force_path_style' => true,
+          })
+          deployment_manifest_fragment['properties']['compiled_package_cache']['options'] = deployment_manifest_fragment['properties']['blobstore']
+        end
+
+        it 'sets the blobstore fields appropriately' do
+          [parsed_yaml['blobstore'], parsed_yaml['compiled_package_cache']].each do |blobstore|
+            expect(blobstore['options']).to eq({
+              'bucket_name' => 'mybucket',
+              'access_key_id' => 'key',
+              'secret_access_key' => 'secret',
+              'use_ssl' => false,
+              'ssl_verify_peer' => false,
+              's3_multipart_threshold' => 123,
+              'port' => 5155,
+              'host' => 'myhost.hostland.edu',
+              's3_force_path_style' => true,
+            })
+          end
+        end
+
+        it 'sets endpoint protocol appropriately when use_ssl is true' do
+          deployment_manifest_fragment['properties']['blobstore']['use_ssl'] = true
+
+          expect(parsed_yaml['blobstore']['options']).to eq({
+            'bucket_name' => 'mybucket',
+            'access_key_id' => 'key',
+            'secret_access_key' => 'secret',
+            'use_ssl' => true,
+            'ssl_verify_peer' => false,
+            's3_multipart_threshold' => 123,
+            'port' => 5155,
+            'host' => 'myhost.hostland.edu',
+            's3_force_path_style' => true,
+          })
+        end
+
+        describe 'the agent blobstore' do
+          it 'has the same config as the toplevel blobstore' do
+            expect(parsed_yaml['cloud']['properties']['agent']['blobstore']['options']).to eq({
+              'bucket_name' => 'mybucket',
+              'access_key_id' => 'key',
+              'secret_access_key' => 'secret',
+              'use_ssl' => false,
+              'ssl_verify_peer' => false,
+              's3_multipart_threshold' => 123,
+              'port' => 5155,
+              'host' => 'myhost.hostland.edu',
+              's3_force_path_style' => true,
+            })
+          end
+
+          context 'when there are override values for the agent' do
+            before do
+              deployment_manifest_fragment['properties']['agent'] = {
+                'blobstore' => {
+                  'access_key_id' => 'agent-key',
+                  'secret_access_key' => 'agent-secret',
+                  'host' => 'fakehost.example.com',
+                  'use_ssl' => true,
+                  'ssl_verify_peer' => true,
+                  's3_force_path_style' => false,
+                  's3_multipart_threshold' => 456,
+                }
+              }
+            end
+
+            it 'uses the override values' do
+              expect(parsed_yaml['cloud']['properties']['agent']['blobstore']['options']).to eq({
+                'bucket_name' => 'mybucket',
+                'access_key_id' => 'agent-key',
+                'secret_access_key' => 'agent-secret',
+                'use_ssl' => true,
+                'ssl_verify_peer' => true,
+                's3_force_path_style' => false,
+                's3_multipart_threshold' => 456,
+                'port' => 5155,
+                'host' => 'fakehost.example.com',
+              })
+            end
+          end
+        end
+      end
     end
   end
 
-  context 'when cloud plugin is not specified' do
-    it 'raises an error' do
-      expect{ parsed_yaml }.to raise_error('Could not find cloud plugin')
-    end
-
-    context 'when external cpi is specified' do
-      before do
-        deployment_manifest_fragment['properties']['external_cpi'] = {
-          'enabled' => true,
-          'name' => 'fake-external-cpi',
-        }
-      end
-
-      it 'does not raise an error' do
-        expect{ parsed_yaml }.to_not raise_error
-      end
-    end
-  end
-
-  describe 'external_cpi' do
+  context 'when configured to use a cpi_job' do
     before do
-      deployment_manifest_fragment['properties']['external_cpi'] = {
-        'enabled' => true,
-        'name' => 'fake-external-cpi',
-      }
+      deployment_manifest_fragment['properties']['director']['cpi_job'] = 'test-cpi'
     end
 
-    it 'sets external_cpi' do
-      expect(parsed_yaml['cloud']['external_cpi']['enabled']).to eq(true)
-      expect(parsed_yaml['cloud']['external_cpi']['cpi_path']).to eq('/var/vcap/jobs/fake-external-cpi/bin/cpi')
+    it 'configures the cpi correctly' do
+      expect(parsed_yaml['cloud']['provider']['name']).to eq('test-cpi')
+      expect(parsed_yaml['cloud']['provider']['path']).to eq('/var/vcap/jobs/test-cpi/bin/cpi')
     end
   end
 end

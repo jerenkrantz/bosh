@@ -1,14 +1,13 @@
-# Copyright (c) 2009-2012 VMware, Inc.
-
-require File.expand_path("../../spec_helper", __FILE__)
-
-require "common/thread_pool"
+require 'spec_helper'
+require 'logging'
+require 'common/thread_pool'
 
 describe Bosh::ThreadPool do
 
   before(:all) do
-    @logger = Logger.new(STDOUT)
-    @logger.level = Logger::INFO
+    @logger = Logging::Logger.new('ThreadPool')
+    @logger.add_appenders(Logging.appenders.stdout)
+    @logger.level = :info
   end
 
   it "should respect max threads" do
@@ -31,11 +30,11 @@ describe Bosh::ThreadPool do
         end
       end
     end
-    max.should be <= 2
+    expect(max).to be <= 2
   end
 
   it "should raise exceptions" do
-    lambda {
+    expect {
       Bosh::ThreadPool.new(:max_threads => 2, :logger => @logger).wrap do |pool|
         5.times do |index|
           pool.process do
@@ -44,14 +43,14 @@ describe Bosh::ThreadPool do
           end
         end
       end
-    }.should raise_exception("bad")
+    }.to raise_exception("bad")
   end
 
   it "should stop processing new work when there was an exception" do
     max = 0
     lock = Mutex.new
 
-    lambda {
+    expect {
       Bosh::ThreadPool.new(:max_threads => 1, :logger => @logger).wrap do |pool|
         10.times do |index|
           pool.process do
@@ -61,9 +60,9 @@ describe Bosh::ThreadPool do
           end
         end
       end
-    }.should raise_exception("bad")
+    }.to raise_exception("bad")
 
-    max.should be == 4
+    expect(max).to eq(4)
   end
 
 end

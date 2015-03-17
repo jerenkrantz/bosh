@@ -3,17 +3,16 @@ require 'bosh/director/api/controllers/base_controller'
 module Bosh::Director
   module Api::Controllers
     class TasksController < BaseController
-      get '/tasks' do
+      get '/' do
         dataset = Models::Task.dataset
-        limit = params['limit']
-        if limit
+
+        if limit = params['limit']
           limit = limit.to_i
           limit = 1 if limit < 1
           dataset = dataset.limit(limit)
         end
 
         states = params['state'].to_s.split(',')
-
         if states.size > 0
           dataset = dataset.filter(:state => states)
         end
@@ -21,16 +20,17 @@ module Bosh::Director
         verbose = params['verbose'] || '1'
         if verbose == '1'
           dataset = dataset.filter(type: %w[
-          update_deployment
-          delete_deployment
-          update_release
-          delete_release
-          update_stemcell
-          delete_stemcell
-          create_snapshot
-          delete_snapshot
-          snapshot_deployment
-        ])
+            create_snapshot
+            delete_deployment
+            delete_release
+            delete_snapshot
+            delete_stemcell
+            run_errand
+            snapshot_deployment
+            update_deployment
+            update_release
+            update_stemcell
+          ])
         end
 
         tasks = dataset.order_by(:timestamp.desc).map do |task|
@@ -45,7 +45,7 @@ module Bosh::Director
         json_encode(tasks)
       end
 
-      get '/tasks/:id' do
+      get '/:id' do
         task = @task_manager.find_task(params[:id])
         if task_timeout?(task)
           task.state = :timeout
@@ -59,7 +59,7 @@ module Bosh::Director
       # Sends back output of given task id and params[:type]
       # Example: `get /tasks/5/output?type=event` will send back the file
       # at /var/vcap/store/director/tasks/5/event
-      get '/tasks/:id/output' do
+      get '/:id/output' do
         log_type = params[:type] || 'debug'
         task = @task_manager.find_task(params[:id])
 
@@ -76,19 +76,18 @@ module Bosh::Director
         end
       end
 
-      delete '/task/:id' do
-        task_id = params[:id]
-        task = @task_manager.find_task(task_id)
+      private
 
-        if task.state != 'processing' && task.state != 'queued'
-          status(400)
-          body("Cannot cancel task #{task_id}: invalid state (#{task.state})")
-        else
-          task.state = :cancelling
+      def task_timeout?(task)
+        # Some of the old task entries might not have the checkpoint_time
+        unless task.checkpoint_time
+          task.checkpoint_time = Time.now
           task.save
-          status(204)
-          body("Cancelling task #{task_id}")
         end
+
+        # If no checkpoint update in 3 cycles --> timeout
+        (task.state == 'processing' || task.state == 'cancelling') &&
+          (Time.now - task.checkpoint_time > Config.task_checkpoint_interval * 3)
       end
     end
   end

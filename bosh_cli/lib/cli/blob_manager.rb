@@ -1,4 +1,5 @@
 # Copyright (c) 2009-2012 VMware, Inc.
+autoload :Logging, 'logging'
 
 module Bosh::Cli
   # In order to avoid storing large objects in git repo,
@@ -10,7 +11,11 @@ module Bosh::Cli
     attr_reader :new_blobs, :updated_blobs
 
     # @param [Bosh::Cli::Release] release BOSH Release object
-    def initialize(release)
+    def initialize(release, max_parallel_downloads, progress_renderer)
+      @progress_renderer = progress_renderer
+      max_parallel_downloads = 1 if max_parallel_downloads.nil? || max_parallel_downloads < 1
+      @max_parallel_downloads = max_parallel_downloads
+
       @release = release
       @index_file = File.join(@release.dir, "config", DEFAULT_INDEX_NAME)
 
@@ -45,9 +50,6 @@ module Bosh::Cli
       end
 
       @blobstore = @release.blobstore
-      if @blobstore.nil?
-        err("Blobstore is not configured")
-      end
 
       @new_blobs = []
       @updated_blobs = []
@@ -208,6 +210,7 @@ module Bosh::Cli
     # establishes symlinks in blobs directory to any files present in index.
     # @return [void]
     def process_index
+      missing_blobs = []
       @index.each_pair do |path, entry|
         if File.exists?(File.join(@src_dir, path))
           err("File `#{path}' is in both blob index and src directory.\n" +
@@ -222,21 +225,34 @@ module Bosh::Cli
           if checksum == entry["sha"]
             need_download = false
           else
-            progress(path, "checksum mismatch, re-downloading...\n".make_red)
+            @progress_renderer.error(path, "checksum mismatch, re-downloading...")
           end
         end
 
         if need_download
-          local_path = download_blob(path)
+          missing_blobs << [path, entry["sha"]]
+        else
+          install_blob(local_path, path, entry["sha"])
         end
+      end
 
-        install_blob(local_path, path, entry["sha"])
+      Bosh::ThreadPool.new(:max_threads => @max_parallel_downloads, :logger => Logging::Logger.new(nil)).wrap do |pool|
+        missing_blobs.each do |path, sha|
+          pool.process do
+            local_path = download_blob(path)
+            install_blob(local_path, path, sha)
+          end
+        end
       end
     end
 
     # Uploads blob to a blobstore, updates blobs index.
     # @param [String] path Blob path relative to blobs dir
     def upload_blob(path)
+      if @blobstore.nil?
+        err("Failed to upload blobs: blobstore not configured")
+      end
+
       blob_path = File.join(@blobs_dir, path)
 
       unless File.exists?(blob_path)
@@ -249,9 +265,9 @@ module Bosh::Cli
 
       checksum = file_checksum(blob_path)
 
-      progress(path, "uploading...")
+      @progress_renderer.start(path, "uploading...")
       object_id = @blobstore.create(File.open(blob_path, "r"))
-      progress(path, "uploaded\n".make_green)
+      @progress_renderer.finish(path, "uploaded")
 
       @index[path] = {
         "object_id" => object_id,
@@ -267,35 +283,41 @@ module Bosh::Cli
     # Downloads blob from a blobstore
     # @param [String] path Downloaded blob file path
     def download_blob(path)
+      if @blobstore.nil?
+        err("Failed to download blobs: blobstore not configured")
+      end
+
       unless @index.has_key?(path)
         err("Unknown blob path `#{path}'")
       end
 
       blob = @index[path]
       size = blob["size"].to_i
-      tmp_file = File.open(File.join(Dir.mktmpdir, "bosh-blob"), "w")
+      blob_path = path.gsub(File::SEPARATOR, '-')
+      tmp_file = File.open(File.join(Dir.mktmpdir, blob_path), "w")
 
       download_label = "downloading"
       if size > 0
         download_label += " " + pretty_size(size)
       end
 
+      @progress_renderer.start(path, "#{download_label}")
       progress_bar = Thread.new do
         loop do
           break unless size > 0
           if File.exists?(tmp_file.path)
             pct = 100 * File.size(tmp_file.path).to_f / size
-            progress(path, "#{download_label} (#{pct.to_i}%)...")
+            @progress_renderer.progress(path, "#{download_label}", pct.to_i)
           end
           sleep(0.2)
         end
       end
 
-      progress(path, "#{download_label}...")
       @blobstore.get(blob["object_id"], tmp_file)
       tmp_file.close
       progress_bar.kill
-      progress(path, "downloaded\n".make_green)
+      @progress_renderer.progress(path, "#{download_label}", 100)
+      @progress_renderer.finish(path, "downloaded")
 
       if file_checksum(tmp_file.path) != blob["sha"]
         err("Checksum mismatch for downloaded blob `#{path}'")
@@ -305,15 +327,6 @@ module Bosh::Cli
     end
 
     private
-
-    # Renders blob operation progress
-    # @param [String] path Blob path relative to blobs dir
-    # @param [String] label Operation happening to a blob
-    def progress(path, label)
-      say("\r", " " * 80)
-      say("\r#{path.truncate(40).make_yellow} #{label}", "")
-      Bosh::Cli::Config.output.flush # Ruby 1.8 compatibility
-    end
 
     # @param [String] src Path to a file containing the blob
     # @param [String] dst Resulting blob path relative to blobs dir
@@ -374,3 +387,4 @@ module Bosh::Cli
     end
   end
 end
+

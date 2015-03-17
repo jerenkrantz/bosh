@@ -1,4 +1,3 @@
-require 'logger'
 require 'sequel'
 require 'sequel/adapters/sqlite'
 require 'cloud/openstack'
@@ -9,7 +8,7 @@ module Bosh::Dev::Openstack
   class MicroBoshDeploymentCleaner
     def initialize(manifest)
       @manifest = manifest
-      @logger = Logger.new($stderr)
+      @logger = Logging.logger(STDERR)
     end
 
     def clean
@@ -49,6 +48,9 @@ module Bosh::Dev::Openstack
           # volume.destroy
         end
       end
+
+      # Wait for OpenStack to release any IP addresses we want to use
+      sleep 120
     end
 
     def clean_server(server)

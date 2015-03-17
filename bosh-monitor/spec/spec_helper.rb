@@ -2,6 +2,7 @@ require File.expand_path('../../../spec/shared_spec_helper', __FILE__)
 
 require 'tempfile'
 require 'bosh/monitor'
+require 'support/buffered_logger'
 
 def spec_asset(filename)
   File.expand_path(File.join(File.dirname(__FILE__), "assets", filename))
@@ -9,6 +10,14 @@ end
 
 def sample_config
   spec_asset("sample_config.yml")
+end
+
+def default_config
+  {
+    'logfile' => STDOUT,
+    'loglevel' => 'off',
+    'director' => {}
+  }
 end
 
 def alert_payload(attrs = {})
@@ -63,6 +72,35 @@ def make_heartbeat(attrs = {})
   Bhm::Events::Heartbeat.new(defaults.merge(attrs))
 end
 
+def find_free_tcp_port
+  begin
+    server = TCPServer.new('127.0.0.1', 0)
+    server.addr[1]
+  ensure
+    server.close
+  end
+end
+
 RSpec.configure do |c|
   c.color = true
+
+  # Could not use after hook because the tests can start EM in an around block
+  # which causes EM.reactor_running? to always return true.
+  c.around do |example|
+    Bhm::config = default_config
+
+    example.call
+    if EM.reactor_running?
+      EM.stop
+
+      max_tries = 50
+      while max_tries > 0
+        break if !EM.reactor_running?
+        max_tries -= 1
+        sleep(0.1)
+      end
+
+      raise 'EM still running, but expected to not.' if EM.reactor_running?
+     end
+  end
 end

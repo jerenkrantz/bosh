@@ -20,10 +20,16 @@ Gem::Specification.new do |s|
   s.bindir       = 'bin'
   s.executables  = %w(blobstore_client_console)
 
-  s.add_dependency 'aws-sdk',         '1.44.0'
-  s.add_dependency 'fog',             '~>1.14.0'
+  s.add_dependency 'aws-sdk',         '1.60.2'
+  s.add_dependency 'fog',             '~>1.27.0'
   s.add_dependency 'httpclient',      '=2.4.0'
   s.add_dependency 'multi_json',      '~> 1.1'
   s.add_dependency 'ruby-atmos-pure', '~> 1.0.5'
   s.add_dependency 'bosh_common',     "~>#{version}"
+
+  s.add_development_dependency 'rspec', '~> 3.0'
+  s.add_development_dependency 'rspec-its'
+  s.add_development_dependency 'rspec-instafail'
+  s.add_development_dependency 'thin'
+  s.add_development_dependency 'simple_blobstore_server'
 end

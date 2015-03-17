@@ -6,58 +6,45 @@ module Bosh::Director
     describe Controllers::BackupsController do
       include Rack::Test::Methods
 
-      let!(:temp_dir) { Dir.mktmpdir}
-
-      before do
+      subject(:app) { described_class.new(Config.new({})) }
+      let(:temp_dir) { Dir.mktmpdir}
+      let(:test_config) {
         blobstore_dir = File.join(temp_dir, 'blobstore')
         FileUtils.mkdir_p(blobstore_dir)
 
-        test_config = Psych.load(spec_asset('test-director-config.yml'))
-        test_config['dir'] = temp_dir
-        test_config['blobstore'] = {
+        config = Psych.load(spec_asset('test-director-config.yml'))
+        config['dir'] = temp_dir
+        config['blobstore'] = {
           'provider' => 'local',
           'options' => {'blobstore_path' => blobstore_dir}
         }
-        test_config['snapshots']['enabled'] = true
-        Config.configure(test_config)
-        @director_app = App.new(Config.load_hash(test_config))
-      end
+        config['snapshots']['enabled'] = true
+        config
+      }
 
-      after do
-        FileUtils.rm_rf(temp_dir)
-      end
+      before { App.new(Config.load_hash(test_config)) }
 
-      def app
-        @rack_app ||= Controller.new
-      end
-
-      def login_as_admin
-        basic_authorize 'admin', 'admin'
-      end
-
-      def login_as(username, password)
-        basic_authorize username, password
-      end
+      after { FileUtils.rm_rf(temp_dir) }
 
       it 'requires auth' do
         get '/'
-        last_response.status.should == 401
+        expect(last_response.status).to eq(401)
       end
 
       it 'sets the date header' do
         get '/'
-        last_response.headers['Date'].should_not be_nil
+        expect(last_response.headers['Date']).not_to be_nil
       end
 
       it 'allows Basic HTTP Auth with admin/admin credentials for ' +
            "test purposes (even though user doesn't exist)" do
         basic_authorize 'admin', 'admin'
         get '/'
-        last_response.status.should == 404
+        expect(last_response.status).to eq(404)
       end
 
       describe 'API calls' do
-        before(:each) { login_as_admin }
+        before(:each) { basic_authorize 'admin', 'admin' }
 
 
         describe 'snapshots' do
@@ -77,7 +64,7 @@ module Bosh::Director
           describe 'backup' do
             describe 'creating' do
               it 'returns a successful response' do
-                post '/backups'
+                post '/'
                 expect_redirect_to_queued_task(last_response)
               end
             end
@@ -87,15 +74,15 @@ module Bosh::Director
                 Dir.mktmpdir do |temp|
                   backup_file = File.join(temp, 'backup.tgz')
                   FileUtils.touch(backup_file)
-                  BackupManager.any_instance.stub(destination_path: backup_file)
+                  allow_any_instance_of(BackupManager).to receive_messages(destination_path: backup_file)
 
-                  get '/backups'
+                  get '/'
                   expect(last_response.status).to eq 200
                 end
               end
 
               it 'returns file not found for missing tarball' do
-                get '/backups'
+                get '/'
                 expect(last_response.status).to eq 404
               end
             end

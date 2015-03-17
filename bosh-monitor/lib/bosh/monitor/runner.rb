@@ -40,7 +40,7 @@ module Bosh::Monitor
     end
 
     def setup_timers
-      EM.next_tick do
+      EM.schedule do
         poll_director
         EM.add_periodic_timer(@intervals.poll_director) { poll_director }
         EM.add_periodic_timer(@intervals.log_stats) { log_stats }
@@ -133,6 +133,17 @@ module Bosh::Monitor
       end
     end
 
+    def alert_director_error(message)
+      Bhm.event_processor.process(:alert, {
+        id: SecureRandom.uuid,
+        severity: 3,
+        title: 'Health monitor failed to connect to director',
+        summary: message,
+        created_at: Time.now.to_i,
+        source: 'hm'
+      })
+    end
+
     def fetch_deployments
       deployments = @director.get_deployments
 
@@ -143,15 +154,15 @@ module Bosh::Monitor
 
         @logger.info "Found deployment `#{deployment_name}'"
 
-        vms = @director.get_deployment_vms(deployment_name)
         @logger.debug "Fetching VMs information for `#{deployment_name}'..."
+        vms = @director.get_deployment_vms(deployment_name)
 
         @agent_manager.sync_agents(deployment_name, vms)
       end
 
     rescue Bhm::DirectorError => e
       log_exception(e)
+      alert_director_error(e.message)
     end
-
   end
 end

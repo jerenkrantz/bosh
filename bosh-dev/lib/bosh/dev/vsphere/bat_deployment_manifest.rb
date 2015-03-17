@@ -1,47 +1,33 @@
 require 'bosh/dev/vsphere'
-require 'bosh/dev/writable_manifest'
+require 'bosh/dev/bat/deployment_manifest'
 
 module Bosh::Dev::VSphere
-  class BatDeploymentManifest
-    include Bosh::Dev::WritableManifest
+  class BatDeploymentManifest < Bosh::Dev::Bat::DeploymentManifest
 
-    attr_reader :filename
-
-    def initialize(env, director_uuid, stemcell_archive)
-      @env = env
-      @director_uuid = director_uuid
-      @stemcell_archive = stemcell_archive
-      @filename = 'bat.yml'
+    def initialize(*var)
+      super(*var)
+      @net_type = 'manual'
     end
 
-    def to_h
-      {
-        'cpi' => 'vsphere',
-        'properties' => {
-          'uuid' => director_uuid.value,
-          'static_ip' => env['BOSH_VSPHERE_BAT_IP'],
-          'second_static_ip' => env['BOSH_VSPHERE_SECOND_BAT_IP'],
-          'pool_size' => 1,
-          'stemcell' => {
-            'name' => stemcell_archive.name,
-            'version' => stemcell_archive.version,
-          },
-          'instances' => 1,
-          'mbus' => "nats://nats:0b450ada9f830085e2cdeff6@#{env['BOSH_VSPHERE_BAT_IP']}:4222",
-          'network' => {
-            'type' => 'manual',
-            'cidr' => env['BOSH_VSPHERE_NETWORK_CIDR'],
-            'reserved' => env['BOSH_VSPHERE_NETWORK_RESERVED'].split(/[|,]/).map(&:strip),
-            'static' => [env['BOSH_VSPHERE_NETWORK_STATIC']],
-            'gateway' => env['BOSH_VSPHERE_NETWORK_GATEWAY'],
-            'vlan' => env['BOSH_VSPHERE_NET_ID'],
-          },
-        },
-      }
+    def validate
+      unless net_type == 'manual'
+        raise "Invalid network type '#{net_type}' - VSphere requires manual networking"
+      end
+
+      super
     end
 
-    private
+    def schema
+      new_schema = super
 
-    attr_reader :env, :stemcell_archive, :director_uuid
+      new_schema.schemas['cpi'] = value_schema('vsphere')
+
+      # only has one network, named 'static'
+      network_schema = new_schema.schemas['properties'].schemas['networks'].elem_schema.schemas
+      network_schema['name'] = value_schema('static')
+      network_schema['vlan'] = string_schema
+
+      new_schema
+    end
   end
 end

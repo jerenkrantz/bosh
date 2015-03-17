@@ -52,7 +52,7 @@ module Bosh::Deployer
 
       it 'tries to require instance manager specific class' +
            '(this allows custom gems to specify instance manager plugin)' do
-        described_class.should_receive(:require).with(
+        expect(described_class).to receive(:require).with(
           'bosh/deployer/instance_manager/fake')
         allow(described_class).to receive(:new)
         described_class.create(config_hash)
@@ -74,21 +74,21 @@ module Bosh::Deployer
       end
 
       it 'returns the plugin specific instance manager' do
-        described_class.stub(:require)
+        allow(described_class).to receive(:require)
 
         fingerprinter = instance_double('Bosh::Deployer::HashFingerprinter')
-        HashFingerprinter
-        .should_receive(:new)
+        expect(HashFingerprinter)
+        .to receive(:new)
         .and_return(fingerprinter)
 
-        fingerprinter
-        .should_receive(:sha1)
+        expect(fingerprinter)
+        .to receive(:sha1)
         .with(config_hash)
         .and_return('fake-config-hash-sha1')
 
         ui_messager = instance_double('Bosh::Deployer::UiMessager')
-        UiMessager
-        .should_receive(:for_deployer)
+        expect(UiMessager)
+        .to receive(:for_deployer)
         .and_return(ui_messager)
 
         expect(Config).to receive(:configure).with(config_hash)
@@ -201,6 +201,35 @@ module Bosh::Deployer
         instance_manager.create('stemcell', stemcell_archive)
 
         expect(http_client).to have_received(:get).with('https://client-ip:80808/info')
+      end
+    end
+
+    describe '#create_disk' do
+      before do
+        allow(config).to receive(:cloud).and_return(infrastructure)
+        allow(state).to receive(:vm_cid).and_return('fake-vm-cid')
+        allow(infrastructure).to receive(:create_disk).and_return('fake-disk-cid')
+        allow(state).to receive(:disk_cid=).with('fake-disk-cid')
+
+        allow(config).to receive(:resources).and_return({
+          'persistent_disk' => 'fake-disk-size',
+          'persistent_disk_cloud_properties' => 'fake-cloud-properties',
+        })
+        allow(deployments_state).to receive(:save).with(infrastructure)
+      end
+
+      it 'passes the persistent_disk_cloud_properties to the cloud' do
+        expect(infrastructure).to receive(:create_disk).
+          with('fake-disk-size', 'fake-cloud-properties', 'fake-vm-cid')
+        instance_manager.create_disk
+      end
+
+      it 'falls back if there are no persistent_disk_cloud_properties' do
+        allow(config).to receive(:resources).and_return({
+          'persistent_disk' => 'fake-disk-size',
+        })
+        expect(infrastructure).to receive(:create_disk).with('fake-disk-size', {}, 'fake-vm-cid')
+        instance_manager.create_disk
       end
     end
   end

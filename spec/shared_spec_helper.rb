@@ -1,6 +1,6 @@
 # This file is included by every sub-project's spec_helper
 
-if ENV['COVERAGE']
+if ENV['COVERAGE'] == 'true'
   require 'simplecov'
   SimpleCov.start do
     root          File.expand_path('../..', __FILE__)
@@ -13,6 +13,7 @@ if ENV['COVERAGE']
 end
 
 require 'rspec'
+require 'rspec/its'
 
 # Useful to see that tests are using expected version of Ruby in CI
 puts "Using #{RUBY_DESCRIPTION}"

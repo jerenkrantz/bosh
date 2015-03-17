@@ -20,21 +20,25 @@ module Bat
 
     def ssh_options
       {
-        private_key: ENV['BAT_VCAP_PRIVATE_KEY'],
+        private_key: @env.vcap_private_key,
         password: @env.vcap_password
       }
     end
 
+    def manual_networking?
+      @env.bat_networking == 'manual'
+    end
+
     def aws?
-      @bosh_api.info['cpi'] == 'aws'
+      @env.bat_infrastructure == 'aws'
     end
 
     def openstack?
-      @bosh_api.info['cpi'] == 'openstack'
+      @env.bat_infrastructure == 'openstack'
     end
 
     def warden?
-      @bosh_api.info['cpi'] == 'warden'
+      @env.bat_infrastructure == 'warden'
     end
 
     def compiled_package_cache?
@@ -55,10 +59,11 @@ module Bat
     def persistent_disk(host, user, options = {})
       get_disks(host, user, options).each do |disk|
         values = disk.last
-        if disk.last['mountpoint'] == '/var/vcap/store'
-          return values['blocks']
+        if values[:mountpoint] == '/var/vcap/store'
+          return values[:blocks]
         end
       end
+      raise 'Could not find persistent disk size'
     end
 
     def ssh(host, user, command, options = {})
@@ -81,6 +86,13 @@ module Bat
 
       @logger.info("--> ssh output: #{output.inspect}")
       output
+    end
+
+    def ssh_sudo(host, user, command, options)
+      if options[:password].nil?
+        raise 'Need to set sudo :password'
+      end
+      ssh(host, user, "echo #{options[:password]} | sudo -p '' -S #{command}", options)
     end
 
     def tarfile

@@ -3,9 +3,10 @@ module VSphereCloud
     include VimSdk
     include RetryBlock
 
-    def initialize(client, file_provider)
+    def initialize(client, file_provider, cloud_searcher)
       @client = client
       @file_provider = file_provider
+      @cloud_searcher = cloud_searcher
     end
 
     def get_current_env(vm, datacenter_name)
@@ -14,7 +15,10 @@ module VSphereCloud
       return unless env_iso_folder
 
       datastore_name = cdrom.backing.datastore.name
-      env_path = env_iso_folder.match(/\[#{datastore_name}\] (.*)/)[1]
+      datastore_pattern = Regexp.escape(datastore_name)
+      result = env_iso_folder.match(/\[#{datastore_pattern}\] (.*)/)
+      raise Bosh::Clouds::CloudError.new('Could not find matching datastore name') unless result
+      env_path = result[1]
 
       contents = @file_provider.fetch_file(datacenter_name, datastore_name, "#{env_path}/env.json")
       raise Bosh::Clouds::CloudError.new('Unable to load env.json') unless contents
@@ -26,11 +30,11 @@ module VSphereCloud
       env_json = JSON.dump(env)
 
       disconnect_cdrom(vm)
-      clean_up_old_env(vm)
+      clean_env(vm)
       @file_provider.upload_file(location[:datacenter], location[:datastore], "#{location[:vm]}/env.json", env_json)
       @file_provider.upload_file(location[:datacenter], location[:datastore], "#{location[:vm]}/env.iso", generate_env_iso(env_json))
 
-      datastore = @client.get_managed_object(Vim::Datastore, name: location[:datastore])
+      datastore = @cloud_searcher.get_managed_object(Vim::Datastore, name: location[:datastore])
       file_name = "[#{location[:datastore]}] #{location[:vm]}/env.iso"
 
       update_cdrom_env(vm, datastore, file_name)
@@ -39,6 +43,17 @@ module VSphereCloud
     def env_iso_folder(cdrom_device)
       return unless cdrom_device && cdrom_device.backing.respond_to?(:file_name)
       File.dirname(cdrom_device.backing.file_name)
+    end
+
+    def clean_env(vm)
+      cdrom = @client.get_cdrom_device(vm)
+      env_iso_folder = env_iso_folder(cdrom)
+      return unless env_iso_folder
+
+      datacenter = @client.find_parent(vm, Vim::Datacenter)
+
+      @client.delete_path(datacenter, File.join(env_iso_folder, 'env.json'))
+      @client.delete_path(datacenter, File.join(env_iso_folder, 'env.iso'))
     end
 
     private
@@ -81,17 +96,6 @@ module VSphereCloud
         raise "#{$?.exitstatus} -#{output}" if $?.exitstatus != 0
         File.open(iso_path, 'r') { |f| f.read }
       end
-    end
-
-    def clean_up_old_env(vm)
-      cdrom = @client.get_cdrom_device(vm)
-      env_iso_folder = env_iso_folder(cdrom)
-      return unless env_iso_folder
-
-      datacenter = @client.find_parent(vm, Vim::Datacenter)
-
-      @client.delete_path(datacenter, File.join(env_iso_folder, 'env.json'))
-      @client.delete_path(datacenter, File.join(env_iso_folder, 'env.iso'))
     end
 
     def which(programs)

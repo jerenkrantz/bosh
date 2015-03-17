@@ -7,6 +7,7 @@ module VSphereCloud
 
       def initialize(config)
         @config = config
+        @client = config.client
       end
 
       def mob
@@ -16,10 +17,32 @@ module VSphereCloud
       end
 
       def vm_folder
+        if @config.datacenter_use_sub_folder
+          folder_path = [@config.datacenter_vm_folder, Bosh::Clouds::Config.uuid].join('/')
+          Folder.new(folder_path, @config)
+        else
+          master_vm_folder
+        end
+      end
+
+      def vm_path(vm_cid)
+        [name, 'vm', vm_folder.path_components, vm_cid].join('/')
+      end
+
+      def master_vm_folder
         Folder.new(@config.datacenter_vm_folder, @config)
       end
 
       def template_folder
+        if @config.datacenter_use_sub_folder
+          folder_path = [@config.datacenter_template_folder, Bosh::Clouds::Config.uuid].join('/')
+          Folder.new(folder_path, @config)
+        else
+          master_template_folder
+        end
+      end
+
+      def master_template_folder
         Folder.new(@config.datacenter_template_folder, @config)
       end
 
@@ -39,22 +62,14 @@ module VSphereCloud
         @config.datacenter_persistent_datastore_pattern
       end
 
-      def allow_mixed
-        @config.datacenter_allow_mixed_datastores
-      end
-
       def inspect
         "<Datacenter: #{mob} / #{name}>"
       end
 
       def clusters
-        client = @config.client
-        cluster_mobs = client.get_managed_objects(
-          Vim::ClusterComputeResource, root: mob, include_name: true)
-        cluster_mobs.delete_if { |name, _| !config.datacenter_clusters.has_key?(name) }
-        cluster_mobs = Hash[*cluster_mobs.flatten]
+        cluster_mobs = Hash[*cluster_tuples.flatten]
 
-        clusters_properties = client.get_properties(
+        clusters_properties = @client.cloud_searcher.get_properties(
           cluster_mobs.values, Vim::ClusterComputeResource,
           Cluster::PROPERTIES, :ensure_all => true)
 
@@ -70,6 +85,36 @@ module VSphereCloud
           clusters[cluster.name] = cluster
         end
         clusters
+      end
+
+      def persistent_datastores
+        datastores = {}
+        clusters.each do |_, cluster|
+          cluster.persistent_datastores.each do |_, datastore|
+            datastores[datastore.name] = datastore
+          end
+        end
+        datastores
+      end
+
+      def pick_persistent_datastore(disk_size_in_mb)
+        weighted_datastores = []
+        persistent_datastores.each_value do |datastore|
+          if datastore.free_space - disk_size_in_mb >= DISK_HEADROOM
+            weighted_datastores << [datastore, datastore.free_space]
+          end
+        end
+
+        Util.weighted_random(weighted_datastores)
+      end
+
+      private
+
+      def cluster_tuples
+        cluster_tuples = @client.cloud_searcher.get_managed_objects(
+          Vim::ClusterComputeResource, root: mob, include_name: true)
+        cluster_tuples.delete_if { |name, _| !config.datacenter_clusters.has_key?(name) }
+        cluster_tuples
       end
     end
   end

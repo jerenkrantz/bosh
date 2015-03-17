@@ -4,32 +4,34 @@ module Bosh::Stemcell
   class ArchiveFilename
     extend Forwardable
 
-    def initialize(version, definition, base_name, light)
+    def initialize(version, definition, base_name, disk_format)
       @version = version
       @definition = definition
       @base_name = base_name
-      @light = light
+      @disk_format = disk_format
     end
 
     def to_s
       stemcell_filename_parts = [
         name,
         version,
-        @definition.stemcell_name
+        definition.stemcell_name(disk_format)
       ]
+
       "#{stemcell_filename_parts.join('-')}.tgz"
     end
 
     private
 
     def name
-      light ? "light-#{base_name}" : base_name
+      definition.light? ? "light-#{base_name}" : base_name
     end
 
     attr_reader(
       :base_name,
       :version,
-      :light,
+      :definition,
+      :disk_format,
     )
   end
 end

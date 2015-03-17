@@ -5,10 +5,11 @@ module VSphereCloud
   describe AgentEnv do
     include FakeFS::SpecHelpers
 
-    subject(:agent_env) { described_class.new(client, file_provider) }
+    subject(:agent_env) { described_class.new(client, file_provider, cloud_searcher) }
 
     let(:client) { instance_double('VSphereCloud::Client') }
     let(:file_provider) { double('VSphereCloud::FileProvider') }
+    let(:cloud_searcher) { double('VSphereCloud::CloudSearcher') }
 
     let(:location) do
       {
@@ -69,6 +70,54 @@ module VSphereCloud
       end
     end
 
+    describe '#clean_env' do
+      let(:vm) do
+        instance_double('VimSdk::Vim::VirtualMachine',
+          config: double(:config, hardware: double(:hardware, device: [cdrom]))
+        )
+      end
+
+      let(:cdrom_connectable_connected) { true }
+
+      let(:cdrom) do
+        VimSdk::Vim::Vm::Device::VirtualCdrom.new(
+          connectable: VimSdk::Vim::Vm::Device::VirtualDevice::ConnectInfo.new(
+            connected: cdrom_connectable_connected
+          ),
+          backing: cdrom_backing
+        )
+      end
+
+      let(:cdrom_backing) do
+        VimSdk::Vim::Vm::Device::VirtualCdrom::IsoBackingInfo.new(
+          file_name: '[fake-old-datastore-name 1] fake-vm-name/env.iso'
+        )
+      end
+
+      let(:datacenter) { instance_double('VimSdk::Vim::Datacenter') }
+      before do
+        allow(client).to receive(:get_cdrom_device).with(vm).and_return(cdrom)
+        allow(client).to receive(:find_parent).with(vm, VimSdk::Vim::Datacenter).and_return(datacenter)
+      end
+
+      it 'deletes env.json and env.iso' do
+        expect(client).to receive(:delete_path).with(datacenter, '[fake-old-datastore-name 1] fake-vm-name/env.json')
+        expect(client).to receive(:delete_path).with(datacenter, '[fake-old-datastore-name 1] fake-vm-name/env.iso')
+
+        agent_env.clean_env(vm)
+      end
+
+      context 'when no cdrom exists' do
+        let(:cdrom) { nil }
+
+        it 'does not delete anything' do
+          expect(client).to_not receive(:delete_path)
+
+          agent_env.clean_env(vm)
+        end
+      end
+    end
+
     describe '#set_env' do
       let(:vm) do
         instance_double('VimSdk::Vim::VirtualMachine',
@@ -100,7 +149,7 @@ module VSphereCloud
         allow(cdrom).to receive(:kind_of?).with(VimSdk::Vim::Vm::Device::VirtualCdrom).and_return(true)
         allow(client).to receive(:get_cdrom_device).with(vm).and_return(cdrom)
         allow(client).to receive(:find_parent).with(vm, VimSdk::Vim::Datacenter).and_return(datacenter)
-        allow(client).to receive(:get_managed_object).with(VimSdk::Vim::Datastore, name: 'fake-datastore-name 1').
+        allow(cloud_searcher).to receive(:get_managed_object).with(VimSdk::Vim::Datastore, name: 'fake-datastore-name 1').
           and_return(vm_datastore)
       end
 

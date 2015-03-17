@@ -38,7 +38,6 @@ module Bosh::Dev
         bosh_openstack_cpi
         bosh-registry
         bosh_vsphere_cpi
-        bosh_warden_cpi
         bosh-director
         bosh-director-core
         bosh-monitor
@@ -58,7 +57,7 @@ module Bosh::Dev
     end
 
     def uses_bundler?(component_name)
-      %w(bosh-director bosh-monitor).include?(component_name)
+      %w(bosh-director bosh-monitor bosh-registry).include?(component_name)
     end
 
     def root

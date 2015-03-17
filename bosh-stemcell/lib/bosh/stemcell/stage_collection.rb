@@ -30,10 +30,11 @@ module Bosh::Stemcell
         :bosh_go_agent,
         :bosh_micro_go,
         :aws_cli,
+        :logrotate_config,
       ]
     end
 
-    def infrastructure_stages
+    def build_stemcell_image_stages
       case infrastructure
       when Infrastructure::Aws then
         aws_stages
@@ -48,27 +49,16 @@ module Bosh::Stemcell
       end
     end
 
-    def openstack_stages
-      if operating_system.instance_of?(OperatingSystem::Centos)
-        centos_openstack_stages
-      else
-        default_openstack_stages
-      end
-    end
-
-    def vsphere_stages
-      if operating_system.instance_of?(OperatingSystem::Centos)
-        centos_vsphere_stages
-      else
-        default_vsphere_stages
-      end
-    end
-
-    def vcloud_stages
-      if operating_system.instance_of?(OperatingSystem::Centos)
-        centos_vcloud_stages
-      else
-        default_vcloud_stages
+    def package_stemcell_stages(disk_format)
+      case disk_format
+        when 'raw' then
+          raw_package_stages
+        when 'qcow2' then
+          qcow2_package_stages
+        when 'ovf' then
+          ovf_package_stages
+        when 'files' then
+          files_package_stages
       end
     end
 
@@ -76,16 +66,42 @@ module Bosh::Stemcell
 
     def_delegators :@definition, :infrastructure, :operating_system, :agent
 
+    def openstack_stages
+      if operating_system.instance_of?(OperatingSystem::Centos)
+        centos_openstack_stages
+      else
+        ubuntu_openstack_stages
+      end
+    end
+
+    def vsphere_stages
+      if operating_system.instance_of?(OperatingSystem::Centos)
+        centos_vmware_stages
+      else
+        ubuntu_vmware_stages
+      end
+    end
+
+    def vcloud_stages
+      if operating_system.instance_of?(OperatingSystem::Centos)
+        centos_vmware_stages
+      else
+        ubuntu_vmware_stages
+      end
+    end
+
     def centos_os_stages
       [
         :base_centos,
         :base_centos_packages,
+        :base_ssh,
         # Bosh steps
         :bosh_users,
         :bosh_monit,
         :bosh_ntpdate,
         :bosh_sudoers,
         :rsyslog,
+        :delay_monit_start,
         # Install GRUB/kernel/etc
         :system_grub,
       ]
@@ -98,51 +114,35 @@ module Bosh::Stemcell
         :base_apt,
         :base_ubuntu_build_essential,
         :base_ubuntu_packages,
+        :base_ssh,
         :bosh_dpkg_list,
         :bosh_sysstat,
         :bosh_sysctl,
         :system_kernel,
-        :system_rescan_scsi_bus,
         # Bosh steps
         :bosh_users,
         :bosh_monit,
         :bosh_ntpdate,
         :bosh_sudoers,
         :rsyslog,
+        :delay_monit_start,
         # Install GRUB/kernel/etc
         :system_grub,
+        # Symlink vim to vim.tiny
+        :vim_tiny,
       ]
     end
 
-    def centos_vsphere_stages
+    def centos_vmware_stages
       [
         #:system_open_vm_tools,
         :system_vsphere_cdrom,
         :system_parameters,
         :bosh_clean,
         :bosh_harden,
+        :bosh_vsphere_agent_settings,
         :image_create,
         :image_install_grub,
-        :image_ovf_vmx,
-        :image_ovf_generate,
-        :image_ovf_prepare_stemcell,
-        :stemcell,
-      ]
-    end
-
-    def centos_vcloud_stages
-      [
-        #:system_open_vm_tools,
-        :system_vsphere_cdrom,
-        :system_parameters,
-        :bosh_clean,
-        :bosh_harden,
-        :image_create,
-        :image_install_grub,
-        :image_ovf_vmx,
-        :image_ovf_generate,
-        :image_ovf_prepare_stemcell,
-        :stemcell
       ]
     end
 
@@ -154,13 +154,10 @@ module Bosh::Stemcell
         # Finalisation,
         :bosh_clean,
         :bosh_harden,
-        :bosh_harden_ssh,
+        :bosh_disable_password_authentication,
+        :bosh_openstack_agent_settings,
         :image_create,
         :image_install_grub,
-        :image_openstack_qcow2,
-        :image_openstack_prepare_stemcell,
-        # Final stemcell
-        :stemcell_openstack,
       ]
     end
 
@@ -173,18 +170,16 @@ module Bosh::Stemcell
         # Finalisation
         :bosh_clean,
         :bosh_harden,
-        :bosh_harden_ssh,
+        :bosh_disable_password_authentication,
+        :bosh_aws_agent_settings,
         # Image/bootloader
         :image_create,
         :image_install_grub,
         :image_aws_update_grub,
-        :image_aws_prepare_stemcell,
-        # Final stemcell
-        :stemcell,
       ]
     end
 
-    def default_openstack_stages
+    def ubuntu_openstack_stages
       [
         # Misc
         :system_openstack_network,
@@ -194,18 +189,15 @@ module Bosh::Stemcell
         # Finalisation,
         :bosh_clean,
         :bosh_harden,
-        :bosh_harden_ssh,
+        :bosh_disable_password_authentication,
+        :bosh_openstack_agent_settings,
         # Image/bootloader
         :image_create,
         :image_install_grub,
-        :image_openstack_qcow2,
-        :image_openstack_prepare_stemcell,
-        # Final stemcell
-        :stemcell_openstack,
       ]
     end
 
-    def default_vsphere_stages
+    def ubuntu_vmware_stages
       [
         :system_open_vm_tools,
         :system_vsphere_cdrom,
@@ -214,34 +206,10 @@ module Bosh::Stemcell
         # Finalisation
         :bosh_clean,
         :bosh_harden,
+        :bosh_vsphere_agent_settings,
         # Image/bootloader
         :image_create,
         :image_install_grub,
-        :image_ovf_vmx,
-        :image_ovf_generate,
-        :image_ovf_prepare_stemcell,
-        # Final stemcell
-        :stemcell,
-      ]
-    end
-
-    def default_vcloud_stages
-      [
-        :system_open_vm_tools,
-        :system_vsphere_cdrom,
-        # Misc
-        :system_parameters,
-        # Finalisation
-        :bosh_clean,
-        :bosh_harden,
-        # Image/bootloader
-        :image_create,
-        :image_install_grub,
-        :image_ovf_vmx,
-        :image_ovf_generate,
-        :image_ovf_prepare_stemcell,
-        # Final stemcell
-        :stemcell
       ]
     end
 
@@ -252,13 +220,36 @@ module Bosh::Stemcell
         # Finalisation
         :bosh_clean,
         :bosh_harden,
-        # Image copy
-        :bosh_copy_root,
         # only used for spec test
         :image_create,
-        # Final stemcell
-        :stemcell,
       ]
     end
+
+    def raw_package_stages
+      [
+        :prepare_raw_image_stemcell,
+      ]
+    end
+
+    def qcow2_package_stages
+      [
+        :prepare_qcow2_image_stemcell,
+      ]
+    end
+
+    def ovf_package_stages
+      [
+        :image_ovf_vmx,
+        :image_ovf_generate,
+        :prepare_ovf_image_stemcell,
+      ]
+    end
+
+    def files_package_stages
+      [
+        :prepare_files_image_stemcell,
+      ]
+    end
+
   end
 end

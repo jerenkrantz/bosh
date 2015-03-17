@@ -19,6 +19,9 @@ module Bosh::Cli
 
       # @return [Integer] CLI polling interval
       attr_accessor :poll_interval
+
+      # @return [Integer] CLI max parallel downloads
+      attr_accessor :max_parallel_downloads
     end
 
     @commands = {}
@@ -155,15 +158,51 @@ module Bosh::Cli
       @config_file["deployment"][target] = deployment_file_path
     end
 
-    [:target, :target_name, :target_version, :release,
-     :target_uuid].each do |attr|
-      define_method attr do
-        read(attr, false)
-      end
+    def target
+      read(:target, false)
+    end
 
-      define_method "#{attr}=" do |value|
-        write_global(attr, value)
-      end
+    def target=(value)
+      write_global(:target, value)
+    end
+
+    def target_name
+      read(:target_name, false)
+    end
+
+    def target_name=(value)
+      write_global(:target_name, value)
+    end
+
+    def target_version
+      read(:target_version, false)
+    end
+
+    def target_version=(value)
+      write_global(:target_version, value)
+    end
+
+    def release
+      read(:release, false)
+    end
+
+    def release=(value)
+      write_global(:release, value)
+    end
+
+    def target_uuid
+      read(:target_uuid, false)
+    end
+
+    def target_uuid=(value)
+      write_global(:target_uuid, value)
+    end
+
+    # Read the max parallel downloads configuration.
+    #
+    # @return [Integer] The maximum number of parallel downloads
+    def max_parallel_downloads
+      self.class.max_parallel_downloads || @config_file.fetch("max_parallel_downloads", 1)
     end
 
     def read(attr, try_local_first = true)

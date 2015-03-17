@@ -34,6 +34,8 @@ The registry options are passed to the Openstack CPI by the BOSH director based 
   default OpenStack ssh key name to assign to created virtual machines
 * `default_security_group` (required)
   default OpenStack security group to assign to created virtual machines
+* `ignore_server_availability_zone` (optional)
+  When creating a disk, do not use the availability zone of the server, fall back to Openstacks default. Commonly used if Ceph is used for block storage. Defaults to false.
 
 ### Registry options
 
@@ -73,6 +75,8 @@ These options are specified under `cloud_properties` in the `resource_pools` sec
   which type of instance (OpenStack flavor) the VMs should belong to
 * `availability_zone` (optional)
   the OpenStack availability zone the VMs should be created in
+* `scheduler_hints` (optional)
+  [filters](http://docs.openstack.org/developer/nova/devref/filter_scheduler.html) that will be passed to Nova.
 
 ## Example
 
@@ -120,6 +124,8 @@ This is a sample of how OpenStack specific properties are used in a BOSH deploym
         cloud_properties:
           instance_type: m1.small
           availability_zone:
+          scheduler_hints:
+            group: af09abf2-2283-47d6-f2bd-2932a9ae949c
 
     ...
 

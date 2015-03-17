@@ -31,7 +31,7 @@ module Bosh::Cli::Versions
       @index_file  = File.join(@storage_dir, 'index.yml')
 
       if File.file?(@index_file)
-        init_index(VersionsIndex.load_index_yaml(@index_file))
+        reload
       else
         init_index({})
       end
@@ -82,6 +82,10 @@ module Bosh::Cli::Versions
         raise "Cannot update non-existent entry with key `#{key}'"
       end
 
+      if old_build['blobstore_id']
+        raise "Cannot update entry `#{old_build}' with a blobstore id"
+      end
+
       if new_build['version'] != old_build['version']
         raise "Cannot update entry `#{old_build}' with a different version: `#{new_build}'"
       end
@@ -126,6 +130,10 @@ module Bosh::Cli::Versions
 
     def save
       VersionsIndex.write_index_yaml(@index_file, @data)
+    end
+
+    def reload
+      init_index(VersionsIndex.load_index_yaml(@index_file))
     end
 
     private

@@ -50,9 +50,19 @@ properties:
     description: AWS IAM Secret Access Key
   aws.region:
     description: AWS EC2 Region
+  aws.ec2_endpoint:
+    description: The service endpoint for Amazon EC2 (optional, if not supplied default region endpoint will be used)
+  aws.elb_endpoint:
+    description: The service endpoint for Amazon Elastic Load Balancing (optional, if not supplied default region endpoint will be used)
   aws.max_retries:
     description: Max number of retries to connect to AWS
     default: 2
+  aws.ssl_ca_file:
+    description: The path to a CA cert bundle in PEM format
+  aws.ssl_ca_path:
+    description: The path the a CA cert directory
+  aws.ssl_verify_peer:
+    description: When true the HTTP handler validate server certificates for HTTPS requests
 
   # For OpenStack
   openstack.auth_url:

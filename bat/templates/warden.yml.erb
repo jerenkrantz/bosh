@@ -79,7 +79,7 @@ resource_pools:
     size: <%= properties.pool_size %>
     stemcell:
       name: <%= properties.stemcell.name %>
-      version: <%= properties.stemcell.version %>
+      version: '<%= properties.stemcell.version %>'
     cloud_properties:
       name: random
     <% if properties.password %>
@@ -90,7 +90,9 @@ resource_pools:
 
 jobs:
   - name: <%= properties.job || "batlight" %>
-    template: <%= properties.template || properties.job || "batlight" %>
+    templates: <% (properties.templates || ["batlight"]).each do |template| %>
+    - name: <%= template %>
+    <% end %>
     instances: <%= properties.instances %>
     resource_pool: common
     <% if properties.persistent_disk %>
@@ -104,7 +106,6 @@ jobs:
       <% end %>
 
 properties:
-  mbus: <%= properties.mbus %>
   batlight:
     <% if properties.batlight.fail %>
     fail: <%= properties.batlight.fail %>

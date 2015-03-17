@@ -2,9 +2,10 @@ require 'spec_helper'
 
 module Bosh::Director
   describe Jobs::RunErrand do
-    subject(:job) { described_class.new('fake-dep-name', 'fake-errand-name') }
+    subject(:job) { described_class.new('fake-dep-name', 'fake-errand-name', keep_alive) }
+    let(:keep_alive) { false }
 
-    before { App.stub_chain(:instance, :blobstores, :blobstore).with(no_args).and_return(blobstore) }
+    before { allow(App).to receive_message_chain(:instance, :blobstores, :blobstore).and_return(blobstore) }
     let(:blobstore) { instance_double('Bosh::Blobstore::Client') }
 
     describe 'Resque job class expectations' do
@@ -25,7 +26,6 @@ module Bosh::Director
         let(:event_log) { instance_double('Bosh::Director::EventLog::Log') }
 
         before { allow(Config).to receive(:logger).with(no_args).and_return(logger) }
-        let(:logger) { Logger.new('/dev/null') }
 
         before do
           allow(DeploymentPlan::Planner).to receive(:parse).
@@ -120,6 +120,11 @@ module Bosh::Director
                   and_return(runner)
               end
               let(:runner) { instance_double('Bosh::Director::Errand::Runner') }
+              before do
+                allow(runner).to receive(:run).
+                  with(no_args).
+                  and_return('fake-result-short-description')
+              end
 
               it 'runs an errand with deployment lock and returns short result description' do
                 called_after_block_check = double(:called_in_block_check, call: nil)
@@ -204,6 +209,22 @@ module Bosh::Director
 
                     expect { subject.perform }.to raise_error(error)
                   end
+                end
+              end
+
+              context 'when errand is run with keep-alive' do
+                let(:keep_alive) { true }
+
+                it 'does not delete instances' do
+                  expect(job_manager).to_not receive(:delete_instances)
+
+                  expect(subject.perform).to eq('fake-result-short-description')
+                end
+
+                it 'does not refill resource pool' do
+                  expect(rp_manager).to_not receive(:refill)
+
+                  expect(subject.perform).to eq('fake-result-short-description')
                 end
               end
             end

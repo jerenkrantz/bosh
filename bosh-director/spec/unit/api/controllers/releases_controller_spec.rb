@@ -6,78 +6,65 @@ module Bosh::Director
     describe Controllers::ReleasesController do
       include Rack::Test::Methods
 
-      let!(:temp_dir) { Dir.mktmpdir}
-
-      before do
+      subject(:app) { described_class.new(Config.new({})) }
+      let(:temp_dir) { Dir.mktmpdir}
+      let(:test_config) do
         blobstore_dir = File.join(temp_dir, 'blobstore')
         FileUtils.mkdir_p(blobstore_dir)
 
-        test_config = Psych.load(spec_asset('test-director-config.yml'))
-        test_config['dir'] = temp_dir
-        test_config['blobstore'] = {
-            'provider' => 'local',
-            'options' => {'blobstore_path' => blobstore_dir}
+        config = Psych.load(spec_asset('test-director-config.yml'))
+        config['dir'] = temp_dir
+        config['blobstore'] = {
+          'provider' => 'local',
+          'options' => {'blobstore_path' => blobstore_dir}
         }
-        test_config['snapshots']['enabled'] = true
-        Config.configure(test_config)
-        @director_app = App.new(Config.load_hash(test_config))
+        config['snapshots']['enabled'] = true
+        config
       end
 
-      after do
-        FileUtils.rm_rf(temp_dir)
-      end
+      before { App.new(Config.load_hash(test_config)) }
 
-      def app
-        @rack_app ||= Controller.new
-      end
-
-      def login_as_admin
-        basic_authorize 'admin', 'admin'
-      end
-
-      def login_as(username, password)
-        basic_authorize username, password
-      end
+      after { FileUtils.rm_rf(temp_dir) }
 
       it 'requires auth' do
         get '/'
-        last_response.status.should == 401
+        expect(last_response.status).to eq(401)
       end
 
       it 'sets the date header' do
         get '/'
-        last_response.headers['Date'].should_not be_nil
+        expect(last_response.headers['Date']).not_to be_nil
       end
 
       it 'allows Basic HTTP Auth with admin/admin credentials for ' +
              "test purposes (even though user doesn't exist)" do
         basic_authorize 'admin', 'admin'
         get '/'
-        last_response.status.should == 404
+        expect(last_response.status).to eq(200)
       end
 
-      describe 'POST', '/releases' do
+      describe 'POST', '/' do
         before { authorize 'admin', 'admin' }
 
         it 'allows json body with remote release location' do
-          post '/releases', Yajl::Encoder.encode('location' => 'http://release_url'), { 'CONTENT_TYPE' => 'application/json' }
+          post '/', Yajl::Encoder.encode('location' => 'http://release_url'), { 'CONTENT_TYPE' => 'application/json' }
           expect_redirect_to_queued_task(last_response)
         end
 
         it 'allow form parameters with a release local file path' do
           allow(File).to receive(:exists?).with('/path/to/release.tgz').and_return(true)
 
-          post '/releases', { 'nginx_upload_path' => '/path/to/release.tgz'}, { 'CONTENT_TYPE' => 'multipart/form-data' }
+          post '/', { 'nginx_upload_path' => '/path/to/release.tgz'}, { 'CONTENT_TYPE' => 'multipart/form-data' }
           expect_redirect_to_queued_task(last_response)
         end
 
         it 'only consumes application/json and multipart/form-data' do
-          post '/releases', 'fake-data', { 'CONTENT_TYPE' => 'application/octet-stream' }
+          post '/', 'fake-data', { 'CONTENT_TYPE' => 'application/octet-stream' }
           expect(last_response.status).to eq(404)
         end
       end
 
-      describe 'GET', '/releases' do
+      describe 'GET', '/' do
         before { authorize 'admin', 'admin' }
 
         it 'has API call that returns a list of releases in JSON' do
@@ -90,8 +77,8 @@ module Bosh::Director
           Models::ReleaseVersion.
               create(release: release2, version: 2, commit_hash: '0b2c3d', uncommitted_changes: true)
 
-          get '/releases', {}, {}
-          last_response.status.should == 200
+          get '/', {}, {}
+          expect(last_response.status).to eq(200)
           body = last_response.body
 
           expected_collection = [
@@ -101,19 +88,19 @@ module Bosh::Director
                'release_versions' => [Hash['version', '2', 'commit_hash', '0b2c3d', 'uncommitted_changes', true, 'currently_deployed', false, 'job_names', []]]}
           ]
 
-          body.should == Yajl::Encoder.encode(expected_collection)
+          expect(body).to eq(Yajl::Encoder.encode(expected_collection))
         end
 
         it 'returns empty collection if there are no releases' do
-          get '/releases', {}, {}
-          last_response.status.should == 200
+          get '/', {}, {}
+          expect(last_response.status).to eq(200)
 
           body = Yajl::Parser.parse(last_response.body)
-          body.should == []
+          expect(body).to eq([])
         end
       end
 
-      describe 'DELETE', '/releases/<id>' do
+      describe 'DELETE', '/<id>' do
         before { authorize 'admin', 'admin' }
 
         it 'deletes the whole release' do
@@ -121,7 +108,7 @@ module Bosh::Director
           release.add_version(Models::ReleaseVersion.make(:version => '1'))
           release.save
 
-          delete '/releases/test_release'
+          delete '/test_release'
           expect_redirect_to_queued_task(last_response)
         end
 
@@ -130,14 +117,14 @@ module Bosh::Director
           release.add_version(Models::ReleaseVersion.make(:version => '1'))
           release.save
 
-          delete '/releases/test_release?version=1'
+          delete '/test_release?version=1'
           expect_redirect_to_queued_task(last_response)
         end
       end
 
-      describe 'GET', '/releases/<id>' do
+      describe 'GET', '<id>' do
         before { authorize 'admin', 'admin' }
-
+        
         it 'returns versions' do
           release = Models::Release.create(:name => 'test_release')
           (1..10).map do |i|
@@ -145,11 +132,11 @@ module Bosh::Director
           end
           release.save
 
-          get '/releases/test_release'
-          last_response.status.should == 200
+          get '/test_release'
+          expect(last_response.status).to eq(200)
           body = Yajl::Parser.parse(last_response.body)
 
-          body['versions'].sort.should == (1..10).map { |i| i.to_s }.sort
+          expect(body['versions'].sort).to eq((1..10).map { |i| i.to_s }.sort)
         end
       end
     end

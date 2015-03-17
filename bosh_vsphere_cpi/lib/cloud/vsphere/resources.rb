@@ -2,140 +2,127 @@ require 'cloud/vsphere/resources/datacenter'
 
 module VSphereCloud
   class Resources
-    MEMORY_THRESHOLD = 128
-    DISK_THRESHOLD = 1024
+    MEMORY_HEADROOM = 128
+    DISK_HEADROOM = 1024
     STALE_TIMEOUT = 60
     BYTES_IN_MB = 1024 * 1024
 
-    def initialize(config)
+    attr_reader :drs_rules
+
+    def initialize(datacenter, config)
+      @datacenter = datacenter
       @config = config
       @logger = config.logger
       @last_update = 0
       @lock = Monitor.new
-    end
-
-    # Returns the list of datacenters available for placement.
-    #
-    # Will lazily load them and reload the data when it's stale.
-    #
-    # @return [List<Resources::Datacenter>] datacenters.
-    def datacenters
-      @lock.synchronize do
-        update if Time.now.to_i - @last_update > STALE_TIMEOUT
-      end
-      @datacenters
-    end
-
-    # Returns the persistent datastore for the requested context.
-    #
-    # @param [String] dc_name datacenter name.
-    # @param [String] cluster_name cluster name.
-    # @param [String] datastore_name datastore name.
-    # @return [Resources::Datastore] persistent datastore.
-    def persistent_datastore(dc_name, cluster_name, datastore_name)
-      datacenter = datacenters[dc_name]
-      return nil if datacenter.nil?
-      cluster = datacenter.clusters[cluster_name]
-      return nil if cluster.nil?
-      cluster.persistent(datastore_name)
-    end
-
-    # Validate that the persistent datastore is still valid so we don't have to
-    # move the disk.
-    #
-    # @param [String] dc_name datacenter name.
-    # @param [String] datastore_name datastore name.
-    # @return [true, false] true iff the datastore still exists and is in the
-    #   persistent pool.
-    def validate_persistent_datastore(dc_name, datastore_name)
-      datacenter = datacenters[dc_name]
-      if datacenter.nil?
-        raise "Invalid datacenter #{dc_name} #{datacenters.inspect}"
-      end
-      datacenter.clusters.each_value do |cluster|
-        return true unless cluster.persistent(datastore_name).nil?
-      end
-      false
+      @drs_rules = []
     end
 
     # Place the persistent datastore in the given datacenter and cluster with
     # the requested disk space.
     #
-    # @param [String] dc_name datacenter name.
     # @param [String] cluster_name cluster name.
-    # @param [Integer] disk_space disk space.
+    # @param [Integer] disk_size_in_mb disk size in mb.
     # @return [Datastore?] datastore if it was placed succesfuly.
-    def place_persistent_datastore(dc_name, cluster_name, disk_space)
+    def pick_persistent_datastore_in_cluster(cluster_name, disk_size_in_mb)
       @lock.synchronize do
-        datacenter = datacenters[dc_name]
-        return nil if datacenter.nil?
-        cluster = datacenter.clusters[cluster_name]
+        cluster = @datacenter.clusters[cluster_name]
         return nil if cluster.nil?
-        datastore = cluster.pick_persistent(disk_space)
-        return nil if datastore.nil?
-        datastore.allocate(disk_space)
-        return datastore
+
+        pick_datastore(cluster, disk_size_in_mb)
       end
     end
 
-    # Find a place for the requested resources.
+    # Find a cluster for a vm with the requested memory and ephemeral storage, attempting
+    # to allocate it near existing persistent disks.
     #
-    # @param [Integer] memory requested memory.
-    # @param [Integer] ephemeral requested ephemeral storage.
-    # @param [Array<Hash>] persistent requested persistent storage.
-    # @return [Array] an array/tuple of Cluster and Datastore if the resources
-    #   were placed successfully, otherwise exception.
-    def place(memory, ephemeral, persistent)
-      populate_resources(persistent)
-
-      # calculate locality to prioritizing clusters that contain the most
-      # persistent data.
-      locality = cluster_locality(persistent)
-      locality.sort! { |a, b| b[1] <=> a[1] }
-
+    # @param [Integer] requested_memory_in_mb requested memory.
+    # @param [Integer] requested_ephemeral_disk_size_in_mb requested ephemeral storage.
+    # @param [Array<Resources::Disk>] existing_persistent_disks existing persistent disks, if any.
+    # @return [Cluster] selected cluster if the resources were placed successfully, otherwise raises.
+    def pick_cluster_for_vm(requested_memory_in_mb, requested_ephemeral_disk_size_in_mb, existing_persistent_disks)
       @lock.synchronize do
-        locality.each do |cluster, _|
-          persistent_sizes = persistent_sizes_for_cluster(cluster, persistent)
+        # calculate locality to prioritizing clusters that contain the most persistent data.
+        clusters = @datacenter.clusters.values
+        persistent_disk_index = PersistentDiskIndex.new(clusters, existing_persistent_disks)
 
-          scorer = Scorer.new(@config, cluster, memory, ephemeral, persistent_sizes)
-          if scorer.score > 0
-            datastore = cluster.pick_ephemeral(ephemeral)
-            if datastore
-              cluster.allocate(memory)
-              datastore.allocate(ephemeral)
-              return [cluster, datastore]
-            end
+        scored_clusters = clusters.map do |cluster|
+          persistent_disk_not_in_this_cluster = existing_persistent_disks.reject do |disk|
+            persistent_disk_index.clusters_connected_to_disk(disk).include?(cluster)
           end
+
+          score = Scorer.score(
+            @config.logger,
+            cluster,
+            requested_memory_in_mb,
+            requested_ephemeral_disk_size_in_mb,
+            persistent_disk_not_in_this_cluster.map(&:size_in_mb)
+          )
+
+          [cluster, score]
         end
 
-        unless locality.empty?
-          @logger.debug("Ignoring datastore locality as we could not find " +
-                          "any resources near disks: #{persistent.inspect}")
+        acceptable_clusters = scored_clusters.select { |_, score| score > 0 }
+
+        @logger.debug("Acceptable clusters: #{acceptable_clusters.inspect}")
+
+        if acceptable_clusters.empty?
+          total_persistent_size = existing_persistent_disks.map(&:size_in_mb).inject(0, :+)
+          cluster_infos = clusters.map { |cluster| describe_cluster(cluster) }
+
+          raise "Unable to allocate vm with #{requested_memory_in_mb}mb RAM, " +
+              "#{requested_ephemeral_disk_size_in_mb / 1024}gb ephemeral disk, " +
+              "and #{total_persistent_size / 1024}gb persistent disk from any cluster.\n#{cluster_infos.join(", ")}."
         end
 
-        weighted_clusters = []
-        datacenter = datacenters.first.last
-        datacenter.clusters.each_value do |cluster|
-          persistent_sizes = persistent_sizes_for_cluster(cluster, persistent)
-          scorer = Scorer.new(@config, cluster, memory, ephemeral, persistent_sizes)
-          score = scorer.score
-          @logger.debug("Score: #{cluster.name}: #{score}")
-          weighted_clusters << [cluster, score] if score > 0
+        acceptable_clusters = acceptable_clusters.sort_by do |cluster, _score|
+          persistent_disk_index.disks_connected_to_cluster(cluster).map(&:size_in_mb).inject(0, :+)
+        end.reverse
+
+        if acceptable_clusters.any? { |cluster, _| persistent_disk_index.disks_connected_to_cluster(cluster).any? }
+          @logger.debug('Choosing cluster with the greatest available disk')
+          selected_cluster, _ = acceptable_clusters.first
+        else
+          @logger.debug('Choosing cluster by weighted random')
+          selected_cluster = Util.weighted_random(acceptable_clusters)
         end
 
-        raise "No available resources" if weighted_clusters.empty?
+        @logger.debug("Selected cluster '#{selected_cluster.name}'")
 
-        cluster = Util.weighted_random(weighted_clusters)
+        selected_cluster.allocate(requested_memory_in_mb)
+        selected_cluster
+      end
+    end
 
-        datastore = cluster.pick_ephemeral(ephemeral)
+    def describe_cluster(cluster)
+      "#{cluster.name} has #{cluster.free_memory}mb/" +
+        "#{cluster.total_free_ephemeral_disk_in_mb / 1024}gb/" +
+        "#{cluster.total_free_persistent_disk_in_mb / 1024}gb"
+    end
 
-        if datastore
-          cluster.allocate(memory)
-          datastore.allocate(ephemeral)
-          return [cluster, datastore]
+    def pick_ephemeral_datastore(cluster, disk_size_in_mb)
+      @lock.synchronize do
+        datastore = cluster.pick_ephemeral(disk_size_in_mb)
+        if datastore.nil?
+          raise Bosh::Clouds::NoDiskSpace.new(
+              "Not enough ephemeral disk space (#{disk_size_in_mb}MB) in cluster #{cluster.name}")
         end
 
-        raise "No available resources"
+        datastore.allocate(disk_size_in_mb)
+        datastore
+      end
+    end
+
+    def pick_persistent_datastore(cluster, disk_size_in_mb)
+      @lock.synchronize do
+        datastore = cluster.pick_persistent(disk_size_in_mb)
+        if datastore.nil?
+          raise Bosh::Clouds::NoDiskSpace.new(
+              "Not enough persistent disk space (#{disk_size_in_mb}MB) in cluster #{cluster.name}")
+        end
+
+        datastore.allocate(disk_size_in_mb)
+        datastore
       end
     end
 
@@ -143,74 +130,35 @@ module VSphereCloud
 
     attr_reader :config
 
-    # Updates the resource models from vSphere.
-    # @return [void]
-    def update
-      #datacenter_config = config.vcenter_datacenter
-      datacenter = Datacenter.new(config)
-      @datacenters = { datacenter.name => datacenter }
-      @last_update = Time.now.to_i
+    def pick_datastore(cluster, disk_space)
+      datastore = cluster.pick_persistent(disk_space)
+      return nil if datastore.nil?
+      datastore.allocate(disk_space)
+      datastore
     end
 
-    # Calculates the cluster locality for the provided persistent disks.
-    #
-    # @param [Array<Hash>] disks persistent disk specs.
-    # @return [Hash<String, Integer>] hash of cluster names to amount of
-    #   persistent disk space is currently allocated on them.
-    def cluster_locality(disks)
-      locality = {}
-      disks.each do |disk|
-        cluster = disk[:cluster]
-        unless cluster.nil?
-          locality[cluster] ||= 0
-          locality[cluster] += disk[:size]
-        end
+    class PersistentDiskIndex
+      def initialize(clusters, existing_persistent_disks)
+        @clusters_to_disks = Hash[*clusters.map do |cluster|
+            [cluster, existing_persistent_disks.select { |disk| cluster_includes_datastore?(cluster, disk.datastore) }]
+          end.flatten(1)]
+
+        @disks_to_clusters = Hash[*existing_persistent_disks.map do |disk|
+            [disk, clusters.select { |cluster| cluster_includes_datastore?(cluster, disk.datastore) }]
+          end.flatten(1)]
       end
-      locality.to_a
-    end
 
-    # Fill in the resource models on the provided persistent disk specs.
-    # @param [Array<Hash>] disks persistent disk specs.
-    # @return [void]
-    def populate_resources(disks)
-      disks.each do |disk|
-        unless disk[:ds_name].nil?
-          resources = persistent_datastore_resources(disk[:dc_name],
-                                                     disk[:ds_name])
-          if resources
-            disk[:datacenter], disk[:cluster], disk[:datastore] = resources
-          end
-        end
+      def cluster_includes_datastore?(cluster, datastore)
+        cluster.persistent(datastore.name) != nil
       end
-    end
 
-    # Find the resource models for a given datacenter and datastore name.
-    #
-    # Has to traverse the resource hierarchy to find the cluster, then returns
-    # all of the resources.
-    #
-    # @param [String] dc_name datacenter name.
-    # @param [String] ds_name datastore name.
-    # @return [Array] array/tuple of Datacenter, Cluster, and Datastore.
-    def persistent_datastore_resources(dc_name, ds_name)
-      datacenter = datacenters[dc_name]
-      return nil if datacenter.nil?
-      datacenter.clusters.each_value do |cluster|
-        datastore = cluster.persistent(ds_name)
-        return [datacenter, cluster, datastore] unless datastore.nil?
+      def disks_connected_to_cluster(cluster)
+        @clusters_to_disks[cluster]
       end
-      nil
-    end
 
-    # Filters out all of the persistent disk specs that were already allocated
-    # in the cluster.
-    #
-    # @param [Resources::Cluster] cluster specified cluster.
-    # @param [Array<Hash>] disks disk specs.
-    # @return [Array<Hash>] filtered out disk specs.
-    def persistent_sizes_for_cluster(cluster, disks)
-      disks.select { |disk| disk[:cluster] != cluster }.
-        collect { |disk| disk[:size] }
+      def clusters_connected_to_disk(disk)
+        @disks_to_clusters[disk]
+      end
     end
   end
 end

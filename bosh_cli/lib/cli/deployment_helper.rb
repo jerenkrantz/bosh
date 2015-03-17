@@ -8,6 +8,8 @@ module Bosh::Cli
         err("Cannot find deployment manifest in `#{manifest_filename}'")
       end
 
+      header('Processing deployment manifest')
+
       manifest = load_yaml_file(manifest_filename)
       manifest_yaml = File.read(manifest_filename)
 
@@ -74,7 +76,7 @@ module Bosh::Cli
         @_diff_key_visited = {}
         diff.keys.each do |key|
           unless @_diff_key_visited[key]
-            print_summary(diff, key)
+            print_summary(diff, key, false)
             nl
           end
         end
@@ -89,11 +91,9 @@ module Bosh::Cli
     # a meaningful return value.
     # @return Boolean Were there any changes in deployment manifest?
     def inspect_deployment_changes(manifest, options = {})
-      show_empty_changeset = true
-
-      if options.has_key?(:show_empty_changeset)
-        show_empty_changeset = options[:show_empty_changeset]
-      end
+      show_empty_changeset = options.fetch(:show_empty_changeset, true)
+      interactive = options.fetch(:interactive, false)
+      redact_diff = options.fetch(:redact_diff, false)
 
       manifest = manifest.dup
       current_deployment = director.get_deployment(manifest['name'])
@@ -106,8 +106,7 @@ module Bosh::Cli
       current_manifest = Psych.load(current_deployment['manifest'])
 
       unless current_manifest.is_a?(Hash)
-        err('Current deployment manifest format is invalid, ' +
-              'check if director works properly')
+        err('Current deployment manifest format is invalid, check if director works properly')
       end
 
       diff = Bosh::Cli::HashChangeset.new
@@ -115,35 +114,64 @@ module Bosh::Cli
       diff.add_hash(normalize_deployment_manifest(current_manifest), :old)
       @_diff_key_visited = { 'name' => 1, 'director_uuid' => 1 }
 
-      say('Detecting changes in deployment...'.make_green)
-      nl
+      header('Detecting deployment changes')
 
       if !diff.changed? && !show_empty_changeset
         return false
       end
 
       if diff[:release]
-        print_summary(diff, :release)
-        warn_about_release_changes(diff[:release])
+        print_summary(diff, :release, redact_diff)
+        warn_about_release_changes(diff[:release]) if interactive
         nl
       end
 
       if diff[:releases]
-        print_summary(diff, :releases)
-        diff[:releases].each do |release_diff|
-          warn_about_release_changes(release_diff)
+        print_summary(diff, :releases, redact_diff)
+        if interactive
+          diff[:releases].each do |release_diff|
+            warn_about_release_changes(release_diff)
+          end
         end
         nl
       end
 
-      print_summary(diff, :compilation)
+      print_summary(diff, :compilation, redact_diff)
       nl
 
-      print_summary(diff, :update)
+      print_summary(diff, :update, redact_diff)
       nl
 
-      print_summary(diff, :resource_pools)
+      print_summary(diff, :resource_pools, redact_diff)
+      warn_about_stemcell_changes(diff) if interactive
+      nl
 
+      print_summary(diff, :disk_pools, redact_diff)
+      nl
+
+      print_summary(diff, :networks, redact_diff)
+      nl
+
+      print_summary(diff, :jobs, redact_diff)
+      nl
+
+      print_summary(diff, :properties, redact_diff)
+      nl
+
+      diff.keys.each do |key|
+        unless @_diff_key_visited[key]
+          print_summary(diff, key, redact_diff)
+          nl
+        end
+      end
+
+      diff.changed?
+    rescue Bosh::Cli::ResourceNotFound
+      say('Cannot get current deployment information from director, possibly a new deployment'.make_red)
+      true
+    end
+
+    def warn_about_stemcell_changes(diff)
       old_stemcells = Set.new
       new_stemcells = Set.new
 
@@ -159,40 +187,18 @@ module Bosh::Cli
       end
 
       if old_stemcells != new_stemcells
-        unless confirmed?('Stemcell update has been detected. ' +
-                            'Are you sure you want to update stemcells?')
+        unless confirmed?('Stemcell update has been detected. Are you sure you want to update stemcells?')
           cancel_deployment
         end
       end
 
       if old_stemcells.size != new_stemcells.size
         say('Stemcell update seems to be inconsistent with current '.make_red +
-              'deployment. Please carefully review changes above.'.make_red)
+          'deployment. Please carefully review changes above.'.make_red)
         unless confirmed?('Are you sure this configuration is correct?')
           cancel_deployment
         end
       end
-
-      nl
-      print_summary(diff, :networks)
-      nl
-      print_summary(diff, :jobs)
-      nl
-      print_summary(diff, :properties)
-      nl
-
-      diff.keys.each do |key|
-        unless @_diff_key_visited[key]
-          print_summary(diff, key)
-          nl
-        end
-      end
-
-      diff.changed?
-    rescue Bosh::Cli::ResourceNotFound
-      say('Cannot get current deployment information from director, ' +
-            'possibly a new deployment'.make_red)
-      true
     end
 
     def latest_release_versions
@@ -259,6 +265,20 @@ module Bosh::Cli
       end
     end
 
+    # return a job/errand selected by user by name
+    def prompt_for_errand_name
+      errands = list_errands
+
+      err('Deployment has no available errands') if errands.size == 0
+
+      choose do |menu|
+        menu.prompt = 'Choose an errand: '
+        errands.each do |errand, index|
+          menu.choice("#{errand['name']}") { errand }
+        end
+      end
+    end
+
     def jobs_and_indexes
       jobs = prepare_deployment_manifest.fetch('jobs')
 
@@ -282,6 +302,11 @@ module Bosh::Cli
       jobs.find { |job| job.fetch('name') == job_name }
     end
 
+    def list_errands
+      deployment_name = prepare_deployment_manifest.fetch('name')
+      director.list_errands(deployment_name)
+    end
+
     def find_deployment(name)
       if File.exists?(name)
         File.expand_path(name)
@@ -299,7 +324,7 @@ module Bosh::Cli
       EOS
     end
 
-    def print_summary(diff, key, title = nil)
+    def print_summary(diff, key, redact, title = nil)
       title ||= key.to_s.gsub(/[-_]/, ' ').capitalize
 
       say(title.make_green)
@@ -308,7 +333,11 @@ module Bosh::Cli
       if !summary || summary.empty?
         say('No changes')
       else
-        say(summary.join("\n"))
+        if redact
+          say("Changes found - Redacted")
+        else
+          say(summary.join("\n"))
+        end
       end
 
       @_diff_key_visited[key.to_s] = 1

@@ -3,6 +3,7 @@ require 'tempfile'
 require 'rspec/core/rake_task'
 require 'bosh/dev/bat_helper'
 require 'bosh/dev/sandbox/nginx'
+require 'bosh/dev/sandbox/workspace'
 require 'common/thread_pool'
 require 'parallel_tests/tasks'
 
@@ -21,10 +22,24 @@ namespace :spec do
     end
 
     def run_integration_specs
-      num_processes   = ENV['NUM_PROCESSES']
+      Bosh::Dev::Sandbox::Workspace.clean
+
+      num_processes   = ENV['NUM_GROUPS']
       num_processes ||= ENV['TRAVIS'] ? 4 : nil
 
-      Rake::Task['parallel:spec'].invoke(num_processes, 'spec/integration')
+      options = {}
+      options[:count] = num_processes if num_processes
+      options[:group] = ENV['GROUP'] if ENV['GROUP']
+
+      run_in_parallel('spec/integration', options)
+    end
+
+    def run_in_parallel(test_path, options={})
+      count = " -n #{options[:count]}" unless options[:count].to_s.empty?
+      group = " --only-group #{options[:group]}" unless options[:group].to_s.empty?
+      command = "https_proxy= http_proxy= bundle exec parallel_test '#{test_path}'#{count}#{group} --group-by filesize --type rspec"
+      puts command
+      abort unless system(command)
     end
   end
 
@@ -45,12 +60,13 @@ namespace :spec do
       puts "Logging spec results in #{spec_logs}"
 
       max_threads = ENV.fetch('BOSH_MAX_THREADS', 10).to_i
-      Bosh::ThreadPool.new(max_threads: max_threads, logger: Logger.new('/dev/null')).wrap do |pool|
+      null_logger = Logging::Logger.new('Ignored')
+      Bosh::ThreadPool.new(max_threads: max_threads, logger: null_logger).wrap do |pool|
         builds.each do |build|
           pool.process do
             log_file    = "#{spec_logs}/#{build}.log"
             rspec_files = cpi_builds.include?(build) ? "spec/unit/" : "spec/"
-            rspec_cmd   = "rspec --tty -c -f p #{rspec_files}"
+            rspec_cmd   = "rspec --tty --backtrace -c -f p #{rspec_files}"
 
             # inject command name so coverage results for each component don't clobber others
             if system({'BOSH_BUILD_NAME' => build}, "cd #{build} && #{rspec_cmd} > #{log_file} 2>&1")
@@ -86,19 +102,21 @@ namespace :spec do
 
   namespace :system do
     desc 'Run system (BATs) tests (deploys microbosh)'
-    task :micro, [:infrastructure_name, :operating_system_name, :operating_system_version, :net_type, :agent_name] do |_, args|
+    task :micro, [:infrastructure_name, :hypervisor_name, :operating_system_name, :operating_system_version, :net_type, :agent_name, :light, :disk_format] do |_, args|
       Bosh::Dev::BatHelper.for_rake_args(args).deploy_microbosh_and_run_bats
     end
 
     desc 'Run system (BATs) tests (uses existing microbosh)'
-    task :existing_micro, [:infrastructure_name, :operating_system_name, :operating_system_version, :net_type, :agent_name] do |_, args|
+    task :existing_micro, [:infrastructure_name, :hypervisor_name, :operating_system_name, :operating_system_version, :net_type, :agent_name, :light, :disk_format] do |_, args|
       Bosh::Dev::BatHelper.for_rake_args(args).run_bats
+    end
+
+    desc 'Deploy microbosh for system (BATs) tests'
+    task :deploy_micro, [:infrastructure_name, :hypervisor_name, :operating_system_name, :operating_system_version, :net_type, :agent_name, :light, :disk_format] do |_, args|
+      Bosh::Dev::BatHelper.for_rake_args(args).deploy_bats_microbosh
     end
   end
 end
 
 desc 'Run unit and integration specs'
 task :spec => %w(spec:unit spec:integration)
-
-desc 'Run unit and integration specs for Go related code'
-task :gospec => %w(spec:unit spec:integration:go_agent)

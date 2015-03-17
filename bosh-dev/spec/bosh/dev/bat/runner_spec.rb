@@ -25,7 +25,6 @@ module Bosh::Dev::Bat
     end
 
     let(:env) { {} }
-    let(:logger) { Logger.new(StringIO.new) }
 
     before { FileUtils.mkdir_p(artifacts.micro_bosh_deployment_dir) }
     let(:artifacts) do
@@ -52,49 +51,44 @@ module Bosh::Dev::Bat
     # Multiple implementations for the following
     let(:microbosh_deployment_manifest) { double('microbosh-deployment-manifest', write: nil) }
     let(:microbosh_deployment_cleaner) { double('microbosh-deployment-cleaner', clean: nil) }
-    let(:bat_deployment_manifest) { double('bat-deployment-manifest', write: nil) }
+    let(:bat_deployment_manifest) { double('bat-deployment-manifest', net_type: 'net-type', write: nil) }
 
-    describe '#deploy_microbosh_and_run_bats' do
-      before { subject.stub(:run_bats) }
+    describe '#deploy_bats_microbosh' do
+      before { allow(subject).to receive(:run_bats) }
 
       it 'generates a micro manifest' do
-        microbosh_deployment_manifest.should_receive(:write) do
+        expect(microbosh_deployment_manifest).to receive(:write) do
           FileUtils.touch(File.join(Dir.pwd, 'FAKE_MICROBOSH_MANIFEST'))
         end
-        subject.deploy_microbosh_and_run_bats
+        subject.deploy_bats_microbosh
         expect(Dir.entries(artifacts.micro_bosh_deployment_dir)).to include('FAKE_MICROBOSH_MANIFEST')
       end
 
       it 'cleans any previous deployments out' do
-        microbosh_deployment_cleaner.should_receive(:clean)
-        subject.deploy_microbosh_and_run_bats
+        expect(microbosh_deployment_cleaner).to receive(:clean)
+        subject.deploy_bats_microbosh
       end
 
       it 'targets the micro' do
-        bosh_cli_session.should_receive(:run_bosh).with(
+        expect(bosh_cli_session).to receive(:run_bosh).with(
           'micro deployment fake_micro_bosh_deployment_name')
-        subject.deploy_microbosh_and_run_bats
+        subject.deploy_bats_microbosh
       end
 
       it 'deploys the micro' do
-        bosh_cli_session.should_receive(:run_bosh).with(
+        expect(bosh_cli_session).to receive(:run_bosh).with(
           'micro deploy fake_bosh_stemcell_path')
-        subject.deploy_microbosh_and_run_bats
+        subject.deploy_bats_microbosh
       end
 
       it 'logs in to the micro' do
-        bosh_cli_session.should_receive(:run_bosh).with('login admin admin')
-        subject.deploy_microbosh_and_run_bats
-      end
-
-      it 'runs bats' do
-        subject.should_receive(:run_bats)
-        subject.deploy_microbosh_and_run_bats
+        expect(bosh_cli_session).to receive(:run_bosh).with('login admin admin')
+        subject.deploy_bats_microbosh
       end
     end
 
     describe '#run_bats' do
-      before { Rake::Task.stub(:[]).with('bat').and_return(bat_rake_task) }
+      before { allow(Rake::Task).to receive(:[]).with('bat').and_return(bat_rake_task) }
       let(:bat_rake_task) { double("Rake::Task['bat']", invoke: nil) }
 
       describe 'targetting the micro' do
@@ -137,7 +131,7 @@ module Bosh::Dev::Bat
       end
 
       it 'generates a bat manifest' do
-        bat_deployment_manifest.should_receive(:write) do
+        expect(bat_deployment_manifest).to receive(:write) do
           FileUtils.touch(File.join(Dir.pwd, 'FAKE_BAT_MANIFEST'))
         end
         subject.run_bats
@@ -152,6 +146,7 @@ module Bosh::Dev::Bat
         expect(env['BAT_STEMCELL']).to eq(artifacts.stemcell_path)
         expect(env['BAT_VCAP_PASSWORD']).to eq('c1oudc0w')
         expect(env['BAT_INFRASTRUCTURE']).to eq('infrastructure')
+        expect(env['BAT_NETWORKING']).to eq('net-type')
       end
 
       it 'sets BAT_VCAP_PRIVATE_KEY to BOSH_OPENSTACK_PRIVATE_KEY if present' do
@@ -167,7 +162,7 @@ module Bosh::Dev::Bat
       end
 
       it 'invokes the "bat" rake task' do
-        bat_rake_task.should_receive(:invoke)
+        expect(bat_rake_task).to receive(:invoke)
         subject.run_bats
       end
     end

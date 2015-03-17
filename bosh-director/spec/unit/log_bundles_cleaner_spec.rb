@@ -7,14 +7,13 @@ module Bosh::Director
   describe LogBundlesCleaner do
     subject(:log_bundles_cleaner) { described_class.new(blobstore, 86400, logger) } # 1 day
     let(:blobstore) { instance_double('Bosh::Blobstore::BaseClient', delete: nil) }
-    let(:logger) { Logger.new('/dev/null') }
 
     describe '#register_blobstore_id' do
       it 'keeps track of a log bundle associated with blobstore id' do
         expect {
           log_bundles_cleaner.register_blobstore_id('fake-blobstore-id')
         }.to change { Models::LogBundle.count }
-        Models::LogBundle.filter(blobstore_id: 'fake-blobstore-id').count.should == 1
+        expect(Models::LogBundle.filter(blobstore_id: 'fake-blobstore-id').count).to eq(1)
       end
     end
 

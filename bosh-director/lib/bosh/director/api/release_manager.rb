@@ -46,22 +46,21 @@ module Bosh::Director
         release_version
       end
 
-      def create_release_from_url(user, release_url, rebase)
-        options = { remote: true, rebase: rebase }
-        JobQueue.new.enqueue(user, Jobs::UpdateRelease, 'create release', [release_url, options])
+      def create_release_from_url(username, release_url, options)
+        options[:remote] = true
+        JobQueue.new.enqueue(username, Jobs::UpdateRelease, 'create release', [release_url, options])
       end
 
-      def create_release_from_file_path(user, release_path, rebase)
+      def create_release_from_file_path(username, release_path, options)
         unless File.exists?(release_path)
           raise DirectorError, "Failed to create release: file not found - #{release_path}"
         end
 
-        options = { rebase: rebase }
-        JobQueue.new.enqueue(user, Jobs::UpdateRelease, 'create release', [release_path, options])
+        JobQueue.new.enqueue(username, Jobs::UpdateRelease, 'create release', [release_path, options])
       end
 
-      def delete_release(user, release, options = {})
-        JobQueue.new.enqueue(user, Jobs::DeleteRelease, "delete release: #{release.name}", [release.name, options])
+      def delete_release(username, release, options = {})
+        JobQueue.new.enqueue(username, Jobs::DeleteRelease, "delete release: #{release.name}", [release.name, options])
       end
     end
   end

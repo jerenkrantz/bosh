@@ -116,6 +116,15 @@ module Bosh
     end
 
     ##
+    # Checks if a disk exists
+    #
+    # @param [String] disk disk_id that was once returned by {#create_disk}
+    # @return [Boolean] True if the disk exists
+    def has_disk?(disk_id)
+      not_implemented(:has_disk?)
+    end
+
+    ##
     # Reboots a VM
     #
     # @param [String] vm vm id that was once returned by {#create_vm}
@@ -154,10 +163,12 @@ module Bosh
     # when it's attached later.
     #
     # @param [Integer] size disk size in MB
+    # @param [Hash] cloud_properties properties required for creating this disk
+    #               specific to a CPI
     # @param [optional, String] vm_locality vm id if known of the VM that this disk will
     #                           be attached to
     # @return [String] opaque id later used by {#attach_disk}, {#detach_disk}, and {#delete_disk}
-    def create_disk(size, vm_locality = nil)
+    def create_disk(size, cloud_properties, vm_locality = nil)
       not_implemented(:create_disk)
     end
 

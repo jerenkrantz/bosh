@@ -51,6 +51,75 @@ describe Bosh::Cli::Client::Director do
     end
   end
 
+  describe '#login' do
+    context 'new director versions (have version key)' do
+      it 'assigns the username and password' do
+        allow(@director).to receive(:get).with('/info', 'application/json').
+            and_return([200, JSON.generate('version' => 'newer directors', 'user' => 'new user')])
+
+        @director.login('new user', 'new password')
+        expect(@director.user).to eq('new user')
+        expect(@director.password).to eq('new password')
+      end
+
+      it 'returns true when status has a user key' do
+        allow(@director).to receive(:get).with('/info', 'application/json').
+            and_return([200, JSON.generate('version' => 'newer directors', 'user' => 'new user')])
+
+        expect(@director.login('new user', 'new password')).to eq(true)
+      end
+
+      it 'returns false if theres no user key' do
+        allow(@director).to receive(:get).with('/info', 'application/json').
+            and_return([200, JSON.generate('version' => 'newer directors')])
+        expect(@director.login('new user', 'new password')).to eq(false)
+      end
+
+      it 'returns false if we get a non-200' do
+        expect(@director).to receive(:get).with('/info', 'application/json').
+            and_return([403, 'Forbidden'])
+        expect(@director.login('new user', 'new password')).to eq(false)
+
+        expect(@director).to receive(:get).with('/info', 'application/json').
+            and_return([500, 'Error'])
+        expect(@director.login('new user', 'new password')).to eq(false)
+
+        expect(@director).to receive(:get).with('/info', 'application/json').
+            and_return([404, 'Not Found'])
+        expect(@director.login('new user', 'new password')).to eq(false)
+      end
+    end
+
+    context 'old director versions (no version key)' do
+      it 'returns true even if theres no user key, as long as theres no version key' do
+        allow(@director).to receive(:get).with('/info', 'application/json').
+            and_return([200, JSON.generate({})])
+
+        expect(@director.login('new user', 'new password')).to eq(true)
+      end
+
+      it 'returns false if we get a non-200' do
+        expect(@director).to receive(:get).with('/info', 'application/json').
+            and_return([403, 'Forbidden'])
+        expect(@director.login('new user', 'new password')).to eq(false)
+
+        expect(@director).to receive(:get).with('/info', 'application/json').
+            and_return([500, 'Error'])
+        expect(@director.login('new user', 'new password')).to eq(false)
+
+        expect(@director).to receive(:get).with('/info', 'application/json').
+            and_return([404, 'Not Found'])
+        expect(@director.login('new user', 'new password')).to eq(false)
+      end    end
+
+    it 'returns false when login succeeds on old directors' do
+      allow(@director).to receive(:get).with('/info', 'application/json').
+          and_return([200, JSON.generate('user' => 'new user')])
+
+      expect(@director.login('new user', 'new password')).to eq(true)
+    end
+  end
+
   describe 'interface REST API' do
     it 'has helper methods for HTTP verbs which delegate to generic request' do
       [:get, :put, :post, :delete].each do |verb|
@@ -162,19 +231,13 @@ describe Bosh::Cli::Client::Director do
       @director.list_deployments
     end
 
-    it 'lists currently running tasks (director version < 0.3.5)' do
-      expect(@director).to receive(:get).with('/info', 'application/json').
-        and_return([200, JSON.generate({ :version => '0.3.2' })])
-      expect(@director).to receive(:get).
-        with('/tasks?state=processing', 'application/json').
-        and_return([200, JSON.generate([]), {}])
-      @director.list_running_tasks
+    it 'lists errands in current deployment' do
+      expect(@director).to receive(:get).with('/deployments/fake-deployment/errands', 'application/json').
+        and_return([200, JSON.generate([{"name" => "errand"}]), {}])
+      @director.list_errands("fake-deployment")
     end
 
-    it 'lists currently running tasks (director version >= 0.3.5)' do
-      expect(@director).to receive(:get).
-        with('/info', 'application/json').
-        and_return([200, JSON.generate({ :version => '0.3.5' })])
+    it 'lists currently running tasks' do
       expect(@director).to receive(:get).
         with('/tasks?state=processing,cancelling,queued&verbose=1',
              'application/json').
@@ -201,36 +264,36 @@ describe Bosh::Cli::Client::Director do
 
     it 'uploads local release' do
       expect(@director).to receive(:upload_and_track).
-        with(:post, '/releases', '/path',
-             { :content_type => 'application/x-compressed' }).
+        with(:post, '/releases', '/path', hash_including(
+               :content_type => 'application/x-compressed')).
         and_return(true)
       @director.upload_release('/path')
     end
 
-    it 'uploads local release (with rebase)' do
+    it 'uploads local release (with options)' do
       expect(@director).to receive(:upload_and_track).
-        with(:post, '/releases?rebase=true', '/path',
-             { :content_type => 'application/x-compressed' }).
+        with(:post, '/releases?rebase=true', '/path', hash_including(
+               :content_type => 'application/x-compressed')).
         and_return(true)
-      @director.rebase_release('/path')
+      @director.upload_release('/path', rebase: true)
     end
 
     it 'uploads remote release' do
       expect(@director).to receive(:request_and_track).
-        with(:post, '/releases',
-             { :content_type => 'application/json',
-               :payload      => JSON.generate('location' => 'release_uri') }).
+        with(:post, '/releases', hash_including(
+               :content_type => 'application/json',
+               :payload      => JSON.generate('location' => 'release_uri'))).
         and_return(true)
       @director.upload_remote_release('release_uri')
     end
 
-    it 'uploads remote release (with rebase)' do
+    it 'uploads remote release (with options)' do
       expect(@director).to receive(:request_and_track).
-        with(:post, '/releases?rebase=true',
-             { :content_type => 'application/json',
-               :payload      => JSON.generate('location' => 'release_uri') }).
+        with(:post, '/releases?rebase=true&skip_if_exists=true', hash_including(
+               :content_type => 'application/json',
+               :payload      => JSON.generate('location' => 'release_uri'))).
         and_return(true)
-      @director.rebase_remote_release('release_uri')
+      @director.upload_remote_release('release_uri', rebase: true, skip_if_exists: true)
     end
 
     it 'gets release info' do
@@ -735,9 +798,12 @@ describe Bosh::Cli::Client::Director do
         URI::Error.new('fake-error'),
         SocketError.new('fake-error'),
         Errno::ECONNREFUSED.new,
+        Errno::ECONNRESET.new,
+        Errno::ETIMEDOUT.new,
         Timeout::Error.new('fake-error'),
         HTTPClient::TimeoutError.new('fake-error'),
         HTTPClient::KeepAliveDisconnected.new('fake-error'),
+        OpenSSL::SSL::SSLError.new('fake-error'),
       ].each do |error|
         context "when performing request fails with #{error} error" do
           it 'raises DirectorInaccessible error because director could not be reached' do
@@ -782,36 +848,6 @@ describe Bosh::Cli::Client::Director do
       expect(code).to eql(200)
       expect(File.read(filename)).to eql('test body')
       expect(headers).to eql({})
-    end
-  end
-
-  describe 'list_running_tasks' do
-    before do
-      allow(@director).to receive(:get).
-        with('/info', 'application/json').
-        and_return([200, "{\"version\":\"#{director_version}\"}"])
-    end
-
-    context 'when director version is less than 0.3.5' do
-      let(:director_version) { '0.0.1' }
-      it 'sends tasks request in old format' do
-        expect(@director).to receive(:get).
-          with('/tasks?state=processing', 'application/json').
-          and_return([200, '{}'])
-
-        @director.list_running_tasks
-      end
-    end
-
-    context 'when director version is greater than 0.3.5' do
-      let(:director_version) { '1.0000.0 (release:6a18d402 bosh:6a18d402)' }
-      it 'sends tasks request in new format' do
-        expect(@director).to receive(:get).
-          with('/tasks?state=processing,cancelling,queued&verbose=1', 'application/json').
-          and_return([200, '{}'])
-
-        @director.list_running_tasks
-      end
     end
   end
 end

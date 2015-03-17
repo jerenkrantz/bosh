@@ -1,7 +1,5 @@
 require 'peach'
-require 'logger'
 require 'bosh/dev/promotable_artifacts'
-require 'bosh/dev/light_stemcell_pointer'
 require 'bosh/dev/download_adapter'
 require 'bosh/dev/local_download_adapter'
 require 'bosh/dev/upload_adapter'
@@ -10,17 +8,19 @@ require 'bosh/dev/uri_provider'
 require 'bosh/dev/gem_components'
 require 'bosh/stemcell/archive'
 require 'bosh/stemcell/archive_filename'
-require 'bosh/stemcell/definition'
+require 'bosh/stemcell/stemcell'
+require 'logging'
 
 module Bosh::Dev
   class Build
     attr_reader :number
 
-    def self.candidate(logger = Logger.new(STDERR))
+    def self.candidate(bucket_name='bosh-ci-pipeline')
+      logger = Logging.logger(STDERR)
       number = ENV['CANDIDATE_BUILD_NUMBER']
       if number
         logger.info("CANDIDATE_BUILD_NUMBER is #{number}. Using candidate build.")
-        Candidate.new(number, DownloadAdapter.new(logger))
+        Candidate.new(number, bucket_name, DownloadAdapter.new(logger), logger)
       else
         logger.info('CANDIDATE_BUILD_NUMBER not set. Using local build.')
 
@@ -32,15 +32,15 @@ module Bosh::Dev
           subnum = '0000'
         end
 
-        Local.new(subnum, LocalDownloadAdapter.new(logger))
+        Local.new(subnum, bucket_name, LocalDownloadAdapter.new(logger), logger)
       end
     end
 
-    def initialize(number, download_adapter)
+    def initialize(number, bucket_name, download_adapter, logger)
       @number = number
-      @logger = Logger.new($stdout)
-      @promotable_artifacts = PromotableArtifacts.new(self)
-      @bucket = 'bosh-ci-pipeline'
+      @logger = logger
+      @promotable_artifacts = PromotableArtifacts.new(self, logger)
+      @bucket = bucket_name
       @upload_adapter = UploadAdapter.new
       @download_adapter = download_adapter
     end
@@ -66,49 +66,40 @@ module Bosh::Dev
       )
     end
 
-    def upload_stemcell(stemcell)
-      normal_filename = File.basename(stemcell.path)
+    def upload_stemcell(archive)
+      normal_filename = File.basename(archive.path)
       latest_filename = normal_filename.gsub(/#{@number}/, 'latest')
 
-      s3_path = File.join(number.to_s, 'bosh-stemcell', stemcell.infrastructure, normal_filename)
-      s3_latest_path = File.join(number.to_s, 'bosh-stemcell', stemcell.infrastructure, latest_filename)
+      s3_path = File.join(number.to_s, 'bosh-stemcell', archive.infrastructure, normal_filename)
+      s3_latest_path = File.join(number.to_s, 'bosh-stemcell', archive.infrastructure, latest_filename)
 
-      bucket = 'bosh-ci-pipeline'
       upload_adapter = Bosh::Dev::UploadAdapter.new
 
-      upload_adapter.upload(bucket_name: bucket, key: s3_latest_path, body: File.open(stemcell.path), public: true)
+      upload_adapter.upload(bucket_name: bucket, key: s3_latest_path, body: File.open(archive.path), public: true)
       logger.info("uploaded to s3://#{bucket}/#{s3_latest_path}")
-      upload_adapter.upload(bucket_name: bucket, key: s3_path, body: File.open(stemcell.path), public: true)
+      upload_adapter.upload(bucket_name: bucket, key: s3_path, body: File.open(archive.path), public: true)
       logger.info("uploaded to s3://#{bucket}/#{s3_path}")
     end
 
-    def download_stemcell(name, definition, light, output_directory)
-      filename = Bosh::Stemcell::ArchiveFilename.new(number.to_s, definition, name, light).to_s
-      remote_dir = File.join(number.to_s, name, definition.infrastructure.name)
-      download_adapter.download(UriProvider.pipeline_uri(remote_dir, filename), File.join(output_directory, filename))
-      filename
+    def download_stemcell(stemcell, output_directory)
+      remote_dir = File.join(number.to_s, 'bosh-stemcell', stemcell.infrastructure.name)
+      download_adapter.download(UriProvider.pipeline_uri(remote_dir, stemcell.name), File.join(output_directory, stemcell.name))
+      stemcell.name
     end
 
-    def promote_artifacts
+    def promote
       promotable_artifacts.all.peach do |artifact|
-        artifact.promote
+        if artifact.promoted?
+          @logger.info("Skipping #{artifact.name} artifact promotion")
+        else
+          @logger.info("Executing #{artifact.name} artifact promotion")
+          artifact.promote
+        end
       end
     end
 
-    def bosh_stemcell_path(definition, download_dir)
-      File.join(download_dir, Bosh::Stemcell::ArchiveFilename.new(
-        number.to_s,
-        definition,
-        'bosh-stemcell',
-        definition.infrastructure.light?,
-      ).to_s)
-    end
-
-    def light_stemcell
-      name = 'bosh-stemcell'
-      definition = Bosh::Stemcell::Definition.for('aws', 'ubuntu', 'lucid', 'go')
-      filename = download_stemcell(name, definition, true, Dir.pwd)
-      Bosh::Stemcell::Archive.new(filename)
+    def promoted?
+      promotable_artifacts.all.all? { |artifact| artifact.promoted? }
     end
 
     private
@@ -126,11 +117,9 @@ module Bosh::Dev
         release.dev_tarball_path
       end
 
-      def download_stemcell(name, definition, light, output_directory)
-        filename = Bosh::Stemcell::ArchiveFilename.new(
-          number.to_s, definition, name, light).to_s
-        download_adapter.download("tmp/#{filename}", File.join(output_directory, filename))
-        filename
+      def download_stemcell(stemcell, output_directory)
+        download_adapter.download("tmp/#{stemcell.name}", File.join(output_directory, stemcell.name))
+        stemcell.name
       end
     end
 
@@ -138,9 +127,10 @@ module Bosh::Dev
       def release_tarball_path
         remote_dir = File.join(number.to_s, 'release')
         filename = promotable_artifacts.release_file
-        downloaded_release_path = "tmp/#{promotable_artifacts.release_file}"
-        download_adapter.download(UriProvider.pipeline_uri(remote_dir, filename), downloaded_release_path)
-        downloaded_release_path
+        source = UriProvider.pipeline_uri(remote_dir, filename)
+        destination = "tmp/#{filename}"
+        download_adapter.download(source, destination)
+        destination
       end
     end
   end

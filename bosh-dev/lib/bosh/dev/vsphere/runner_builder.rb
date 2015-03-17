@@ -7,12 +7,13 @@ require 'bosh/dev/vsphere/micro_bosh_deployment_manifest'
 require 'bosh/dev/vsphere/micro_bosh_deployment_cleaner'
 require 'bosh/dev/vsphere/bat_deployment_manifest'
 require 'bosh/dev/bat/runner'
+require 'logging'
 
 module Bosh::Dev::VSphere
   class RunnerBuilder
     def build(artifacts, net_type)
       env    = ENV
-      logger = Logger.new(STDOUT)
+      logger = Logging.logger(STDOUT)
 
       director_address = Bosh::Dev::Bat::DirectorAddress.from_env(env, 'BOSH_VSPHERE_MICROBOSH_IP')
       bosh_cli_session = Bosh::Dev::BoshCliSession.default
@@ -20,9 +21,16 @@ module Bosh::Dev::VSphere
       stemcell_archive = Bosh::Stemcell::Archive.new(artifacts.stemcell_path)
 
       microbosh_deployment_manifest =
-        MicroBoshDeploymentManifest.new(env)
-      bat_deployment_manifest =
-        BatDeploymentManifest.new(env, director_uuid, stemcell_archive)
+        MicroBoshDeploymentManifest.new(env, net_type)
+
+      bat_deployment_spec_path = env['BOSH_VSPHERE_BAT_DEPLOYMENT_SPEC']
+      raise 'Missing env var: BOSH_VSPHERE_BAT_DEPLOYMENT_SPEC' unless bat_deployment_spec_path
+
+      bat_deployment_manifest = BatDeploymentManifest.load_from_file(bat_deployment_spec_path)
+      bat_deployment_manifest.net_type = net_type
+      bat_deployment_manifest.director_uuid = director_uuid
+      bat_deployment_manifest.stemcell = stemcell_archive
+      bat_deployment_manifest.validate
 
       microbosh_deployment_cleaner = MicroBoshDeploymentCleaner.new(microbosh_deployment_manifest)
 

@@ -6,13 +6,12 @@ module Bosh::Director
     describe Controllers::PackagesController do
       include Rack::Test::Methods
 
-      subject(:app) { described_class } # "app" is a Rack::Test hook
+      subject(:app) { described_class.new(Config.new({})) }
+      before { allow(Api::ResourceManager).to receive(:new) }
 
-      before { Api::ResourceManager.stub(:new) }
-
-      describe 'POST', '/packages/matches' do
+      describe 'POST', '/matches' do
         def perform
-          post '/packages/matches', YAML.dump(params), { 'CONTENT_TYPE' => 'text/yaml' }
+          post '/matches', YAML.dump(params), { 'CONTENT_TYPE' => 'text/yaml' }
         end
 
         let(:params) { {'packages' => []} }

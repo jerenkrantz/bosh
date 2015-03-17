@@ -48,16 +48,18 @@ module Bosh::Monitor
         @processor.add_plugin(lookup_plugin(plugin["name"], plugin["options"]), plugin["events"])
       end
 
-      Bhm.nats.subscribe("hm.agent.heartbeat.*") do |message, reply, subject|
-        process_event(:heartbeat, subject, message)
-      end
+      EM.schedule do
+        Bhm.nats.subscribe("hm.agent.heartbeat.*") do |message, reply, subject|
+          process_event(:heartbeat, subject, message)
+        end
 
-      Bhm.nats.subscribe("hm.agent.alert.*") do |message, reply, subject|
-        process_event(:alert, subject, message)
-      end
+        Bhm.nats.subscribe("hm.agent.alert.*") do |message, reply, subject|
+          process_event(:alert, subject, message)
+        end
 
-      Bhm.nats.subscribe("hm.agent.shutdown.*") do |message, reply, subject|
-        process_event(:shutdown, subject, message)
+        Bhm.nats.subscribe("hm.agent.shutdown.*") do |message, reply, subject|
+          process_event(:shutdown, subject, message)
+        end
       end
     end
 
@@ -108,6 +110,7 @@ module Bosh::Monitor
     end
 
     def remove_agent(agent_id)
+      @logger.info("Removing agent #{agent_id} from all deployments...")
       @agents.delete(agent_id)
       @deployments.each_pair do |deployment, agents|
         agents.delete(agent_id)
@@ -122,6 +125,8 @@ module Bosh::Monitor
         @logger.error("Invalid format for VM data: expected Hash, got #{vm_data.class}: #{vm_data}")
         return false
       end
+
+      @logger.info("Adding agent #{vm_data["agent_id"]} (#{vm_data["job"]}/#{vm_data["index"]}) to #{deployment_name}...")
 
       agent_id = vm_data["agent_id"]
       agent_cid = vm_data["cid"]

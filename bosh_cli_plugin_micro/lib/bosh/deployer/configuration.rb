@@ -1,5 +1,6 @@
 require 'bosh/deployer/models/instance'
 require 'bosh/deployer/infrastructure_defaults'
+require 'mono_logger'
 
 module Bosh::Deployer
   class Configuration
@@ -23,8 +24,12 @@ module Bosh::Deployer
       @env = config['env']
       @deployment_network = config['deployment_network']
 
-      @logger = Logger.new(config['logging']['file'] || STDOUT)
-      @logger.level = Logger.const_get(config['logging']['level'].upcase)
+      log_io = config['logging']['file'] || STDOUT
+      if log_io.is_a?(String)
+        log_io = File.open(log_io, (File::WRONLY | File::APPEND | File::CREAT))
+      end
+      @logger = MonoLogger.new(log_io)
+      @logger.level = MonoLogger.const_get(config['logging']['level'].upcase)
       @logger.formatter = ThreadFormatter.new
 
       apply_spec = config['apply_spec']
@@ -55,7 +60,6 @@ module Bosh::Deployer
       @cloud_options['properties']['agent']['mbus'] ||=
         'https://vcap:b00tstrap@0.0.0.0:6868'
 
-      @disk_model = nil
       @cloud = nil
       @networks = nil
       @uuid = SecureRandom.uuid
@@ -114,6 +118,10 @@ module Bosh::Deployer
       '127.0.0.1'
     end
 
+    def cpi_task_log
+      cloud_options.fetch('properties', {})['cpi_log']
+    end
+
     private
 
     def vip_network
@@ -122,7 +130,7 @@ module Bosh::Deployer
         'vip' => {
           'ip' => @net_conf['vip'],
           'type' => 'vip',
-          'cloud_properties' => {}
+          'cloud_properties' => @net_conf['cloud_properties']
         }
       }
     end

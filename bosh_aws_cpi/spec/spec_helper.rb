@@ -36,13 +36,13 @@ end
 
 def mock_registry(endpoint = 'http://registry:3333')
   registry = double('registry', :endpoint => endpoint)
-  Bosh::Registry::Client.stub(:new).and_return(registry)
+  allow(Bosh::Registry::Client).to receive(:new).and_return(registry)
   registry
 end
 
 def mock_cloud(options = nil)
   ec2, region = mock_ec2
-  AWS::EC2.stub(:new).and_return(ec2)
+  allow(AWS::EC2).to receive(:new).and_return(ec2)
 
   yield ec2, region if block_given?
 

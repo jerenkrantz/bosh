@@ -48,11 +48,15 @@ module Bosh::Cli
       def release
         return @release if @release
         check_if_release_dir
-        @release = Bosh::Cli::Release.new(@work_dir)
+        @release = Bosh::Cli::Release.new(work_dir, options[:final])
+      end
+
+      def progress_renderer
+        interactive? ? Bosh::Cli::InteractiveProgressRenderer.new : Bosh::Cli::NonInteractiveProgressRenderer.new
       end
 
       def blob_manager
-        @blob_manager ||= Bosh::Cli::BlobManager.new(release)
+        @blob_manager ||= Bosh::Cli::BlobManager.new(release, config.max_parallel_downloads, progress_renderer)
       end
 
       def blobstore
@@ -111,6 +115,10 @@ module Bosh::Cli
         options[:target] || config.target_name || target_url
       end
 
+      def cache_dir
+        File.join(Dir.home, '.bosh', 'cache')
+      end
+
       protected
 
       # Prints director task completion report. Note that event log usually
@@ -131,7 +139,7 @@ module Bosh::Cli
           when :done
             report = success_msg
           else
-            report = nil
+            report = "Task exited with status #{status}"
         end
 
         unless [:running, :done].include?(status)
@@ -204,11 +212,22 @@ module Bosh::Cli
       end
 
       def normalize_url(url)
-        had_port = url.to_s =~ /:\d+$/
+        url = url.gsub(/\/$/, '')
         url = "https://#{url}" unless url.match(/^http:?/)
         uri = URI.parse(url)
-        uri.port = DEFAULT_DIRECTOR_PORT unless had_port
-        uri.to_s.strip.gsub(/\/$/, '')
+
+        if port = url.match(/:(\d+)$/)
+          port_number = port.captures[0].to_i
+          if port_number == URI::HTTPS::DEFAULT_PORT
+            uri.to_s + ":#{URI::HTTPS::DEFAULT_PORT}"
+          else
+            uri.port = port_number
+            uri.to_s
+          end
+        else
+          uri.port = DEFAULT_DIRECTOR_PORT
+          uri.to_s
+        end
       end
     end
   end

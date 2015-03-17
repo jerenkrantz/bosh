@@ -18,8 +18,10 @@ Gem::Specification.new do |s|
   s.files         = `git ls-files -- lib/* config/*`.split("\n") + %w(README.rdoc)
   s.require_paths = ['lib', 'config']
 
-  s.add_dependency 'sqlite3', '~>1.3.7'
+  s.add_dependency 'sqlite3',     '~>1.3.7'
+  s.add_dependency 'mono_logger', '~>1.1.0'
 
+  s.add_dependency 'bosh-core',      "~>#{version}"
   s.add_dependency 'bosh_cli',      "~>#{version}"
   s.add_dependency 'bosh-stemcell', "~>#{version}"
   s.add_dependency 'bosh-registry', "~>#{version}"
@@ -28,8 +30,14 @@ Gem::Specification.new do |s|
   s.add_dependency 'bosh_cpi',           "~>#{version}"
   s.add_dependency 'bosh_aws_cpi',       "~>#{version}"
   s.add_dependency 'bosh_openstack_cpi', "~>#{version}"
-  s.add_dependency 'bosh_vcloud_cpi',    '= 0.5.5'
+  s.add_dependency 'bosh_vcloud_cpi',    '=0.7.2' #leave bosh_vcloud_cpi pinned to 0.7.2 https://www.pivotaltracker.com/story/show/84406944
   s.add_dependency 'bosh_vsphere_cpi',   "~>#{version}"
   s.add_dependency 'bosh-director-core', "~>#{version}"
   s.add_dependency 'blobstore_client',   "~>#{version}"
+
+  s.add_development_dependency 'rake'
+  s.add_development_dependency 'rspec'
+  s.add_development_dependency 'rspec-its'
+  s.add_development_dependency 'fakefs'
+  s.add_development_dependency 'timecop'
 end

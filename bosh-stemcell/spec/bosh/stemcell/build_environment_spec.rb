@@ -145,6 +145,12 @@ module Bosh::Stemcell
           subject.prepare_build
         }.to change { Dir.exists?(work_root) }.from(false).to(true)
       end
+
+      it 'creates the stemcell path' do
+        expect {
+          subject.prepare_build
+        }.to change { Dir.exists?(File.join(root_dir, 'work/work/stemcell')) }.from(false).to(true)
+      end
     end
 
     describe '#os_image_rspec_command' do
@@ -156,6 +162,7 @@ module Bosh::Stemcell
             "cd #{stemcell_specs_dir};",
             'OS_IMAGE=/some/os_image.tgz',
             'bundle exec rspec -fd',
+            "spec/os_image/common_spec.rb",
             "spec/os_image/#{operating_system.name}_#{operating_system.version}_spec.rb",
           ].join(' ')
 
@@ -171,6 +178,7 @@ module Bosh::Stemcell
             "cd #{stemcell_specs_dir};",
             'OS_IMAGE=/some/os_image.tgz',
             'bundle exec rspec -fd',
+            "spec/os_image/common_spec.rb",
             "spec/os_image/#{operating_system.name}_spec.rb",
           ].join(' ')
 
@@ -227,9 +235,18 @@ module Bosh::Stemcell
       end
     end
 
-    describe '#stemcell_file' do
+    describe '#stemcell_files' do
       it 'returns the right file path' do
-        expect(subject.stemcell_file).to eq(File.join(work_path, 'fake-stemcell.tgz'))
+        allow(definition).to receive(:disk_formats) { ['disk-format-1', 'disk-format-2'] }
+        allow(definition).to receive(:light?) { true }
+        allow(definition).to receive(:stemcell_name).with('disk-format-1') { 'infra-hypervisor-os-version' }
+        allow(definition).to receive(:stemcell_name).
+          with('disk-format-2') { 'infra-hypervisor-os-version-disk-format-2' }
+
+        expect(subject.stemcell_files).to eq([
+          File.join(work_path, 'light-bosh-stemcell-007-infra-hypervisor-os-version.tgz'),
+          File.join(work_path, 'light-bosh-stemcell-007-infra-hypervisor-os-version-disk-format-2.tgz'),
+        ])
       end
     end
 
@@ -246,7 +263,7 @@ module Bosh::Stemcell
     end
 
     describe '#command_env' do
-      context 'when the environment does not have HTTP_PROXY or NO_PROXY variables' do
+      context 'when the environment does not have HTTP_PROXY, HTTPS_PROXY or NO_PROXY variables' do
         it 'includes no variables' do
           expect(subject.command_env).to eq('env ')
         end
@@ -277,6 +294,40 @@ module Bosh::Stemcell
 
         it 'includes those variables' do
           expect(subject.command_env).to eq("env http_proxy='some_proxy' no_proxy='no_proxy'")
+        end
+      end
+
+      context 'when the environment has HTTP_PROXY, HTTPS_PROXY and NO_PROXY variables' do
+        let(:env) do
+          {
+            'HTTP_PROXY' => 'fake-http-proxy',
+            'HTTPS_PROXY' => 'fake-https-proxy',
+            'NO_PROXY' => 'fake-no-proxy',
+            'SOME_PROXY' => 'fake-other-proxy',
+          }
+        end
+
+        it 'includes those variables' do
+          expect(subject.command_env).to eq(
+            "env HTTP_PROXY='fake-http-proxy' HTTPS_PROXY='fake-https-proxy' NO_PROXY='fake-no-proxy'"
+          )
+        end
+      end
+
+      context 'when the environment has http_proxy, https_proxy and no_proxy variables' do
+        let(:env) do
+          {
+            'http_proxy' => 'fake-http-proxy',
+            'https_proxy' => 'fake-https-proxy',
+            'no_proxy' => 'fake-no-proxy',
+            'some_proxy' => 'fake-other-proxy',
+          }
+        end
+
+        it 'includes those variables' do
+          expect(subject.command_env).to eq(
+            "env http_proxy='fake-http-proxy' https_proxy='fake-https-proxy' no_proxy='fake-no-proxy'"
+          )
         end
       end
     end

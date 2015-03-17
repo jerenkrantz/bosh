@@ -2,18 +2,46 @@ require 'cli/client/errands_client'
 
 module Bosh::Cli::Command
   class Errand < Base
+    usage 'errands'
+    desc 'List available errands'
+    def errands
+      deployment_required
+      errands = list_errands
+
+      if errands.size > 0
+        errands_table = table do |t|
+          t.headings = ['Name']
+          errands.each { |errand| t << [errand['name']] }
+        end
+        nl
+        say(errands_table)
+      else
+        err("Deployment has no available errands")
+      end
+    end
+
     usage 'run errand'
     desc 'Run specified errand'
     option '--download-logs', 'download logs'
     option '--logs-dir destination_directory', String, 'logs download directory'
-    def run_errand(errand_name)
+    option '--keep-alive', 'prevent deletion/creation of vm after running errand'
+    def run_errand(errand_name=nil)
       auth_required
       deployment_required
 
+      unless errand_name
+        errand = prompt_for_errand_name
+        errand_name = errand['name']
+      end
+      perform_run_errand(errand_name)
+    end
+
+    private
+    def perform_run_errand(errand_name)
       deployment_name = prepare_deployment_manifest['name']
 
       errands_client = Bosh::Cli::Client::ErrandsClient.new(director)
-      status, task_id, errand_result = errands_client.run_errand(deployment_name, errand_name)
+      status, task_id, errand_result = errands_client.run_errand(deployment_name, errand_name, options[:keep_alive] || FALSE)
 
       unless errand_result
         task_report(status, task_id, nil, "Errand `#{errand_name}' did not complete")

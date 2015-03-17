@@ -3,80 +3,55 @@ require 'bosh/dev/git_repo_updater'
 
 module Bosh::Dev
   describe GitRepoUpdater do
-    include FakeFS::SpecHelpers
+    subject(:git_repo_updater) { described_class.new(logger) }
 
-    subject(:git_repo_updater) { described_class.new }
-
-    let(:dir) { '/some/dir' }
-
+    let(:remote_dir) { Dir.mktmpdir('git-repo-updater-remote') }
+    let(:local_dir) { Dir.mktmpdir('git-repo-updater-local') }
     before do
-      Open3.stub(capture3: ['', '', instance_double('Process::Status', success?: true)])
-      Open3.stub(:capture3).with('git', 'status') do
-        ['', '', instance_double('Process::Status', success?: true)]
+      Dir.chdir(remote_dir) do
+        `git init`
+        File.write('README.md', 'hiya!')
+        `git add .`
+        `git commit -m 'Initial commit'`
       end
 
-      FileUtils.mkdir_p(dir)
+      FileUtils.rm_rf(local_dir)
+      `git clone #{remote_dir} #{local_dir}`
+
+      Dir.chdir(remote_dir) { `git checkout -b another-branch` }
     end
 
-    it 'changes to the directory' do
-      Dir.should_receive(:chdir).with(dir)
-
-      subject.update_directory(dir)
+    after do
+      FileUtils.rm_rf(remote_dir)
+      FileUtils.rm_rf(local_dir)
     end
 
-    it 'adds untracked files' do
-      Open3.should_receive(:capture3).with('git', 'add', '.')
+    context 'when there are changes' do
+      before { Dir.chdir(local_dir) { File.write('README.md', 'new contents') } }
 
-      subject.update_directory(dir)
-    end
-
-    it 'adds modified files' do
-      Open3.should_receive(:capture3).with('git', 'commit', '-a', '-m', 'Autodeployer receipt file update')
-
-      subject.update_directory(dir)
-    end
-
-    it 'git pushes' do
-      Open3.should_receive(:capture3).with('git', 'push')
-
-      subject.update_directory(dir)
-    end
-
-    context 'when there are no modified files to commit' do
-      before do
-        Open3.stub(:capture3).with('git', 'status') do
-          [no_modified_files_message, '',
-           instance_double('Process::Status', success?: true)]
-        end
+      it 'commits and pushes the changes' do
+        original_commit = get_head_commit(remote_dir)
+        git_repo_updater.update_directory(local_dir, 'my commit message')
+        expect(get_head_commit(remote_dir)).not_to eq(original_commit)
+        expect(get_head_commit_message(remote_dir)).to eq('my commit message')
       end
+    end
 
-      context 'when the message has parantheses' do
-        let(:no_modified_files_message) { 'nothing to commit (working directory clean)' }
-
-        it 'does not commit' do
-          Open3.should_not_receive(:capture3).with('git', 'commit', '-a', '-m', 'Autodeployer receipt file update')
-          subject.update_directory(dir)
-        end
-
-        it 'does not push' do
-          Open3.should_not_receive(:capture3).with('git', 'push')
-          subject.update_directory(dir)
-        end
+    context 'when there are no changes' do
+      it 'does not commit anything' do
+        original_commit = get_head_commit(remote_dir)
+        git_repo_updater.update_directory(local_dir, 'my commit message')
+        expect(get_head_commit(remote_dir)).to eq(original_commit)
+        expect(get_head_commit_message(remote_dir)).to eq('Initial commit')
       end
+    end
 
-      context 'when the message has a comma' do
-        let(:no_modified_files_message) { 'nothing to commit, working directory clean' }
+    def get_head_commit(repo)
+      Dir.chdir(repo) { `git rev-parse master` }.chomp
+    end
 
-        it 'does not commit' do
-          Open3.should_not_receive(:capture3).with('git', 'commit', '-a', '-m', 'Autodeployer receipt file update')
-          subject.update_directory(dir)
-        end
-
-        it 'does not push' do
-          Open3.should_not_receive(:capture3).with('git', 'push')
-          subject.update_directory(dir)
-        end
-      end
+    def get_head_commit_message(repo)
+      Dir.chdir(repo) { `git log --format=%B -1 master` }.chomp.chomp
     end
   end
 end

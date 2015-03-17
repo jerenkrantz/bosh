@@ -15,8 +15,14 @@ Gem::Specification.new do |s|
   s.email       = 'support@cloudfoundry.com'
   s.required_ruby_version = Gem::Requirement.new('>= 1.9.3')
 
-  s.files        = `git ls-files -- lib/*`.split("\n") + %w(README)
+  s.files        = `git ls-files -- lib/*`.split("\n")
   s.require_path = 'lib'
 
   s.add_dependency 'bosh_common', "~>#{version}"
+  s.add_dependency 'membrane',    '~>1.1.0'
+  s.add_dependency 'logging',     '~>1.8.2'
+
+  s.add_development_dependency 'rake'
+  s.add_development_dependency 'rspec'
+  s.add_development_dependency 'rspec-its'
 end

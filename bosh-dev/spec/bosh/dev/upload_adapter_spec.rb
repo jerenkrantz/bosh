@@ -17,7 +17,7 @@ module Bosh::Dev
     before do
       Fog.mock!
       Fog::Mock.reset
-      ENV.stub(to_hash: {
+      allow(ENV).to receive_messages(to_hash: {
         'BOSH_AWS_ACCESS_KEY_ID' => aws_access_key_id,
         'BOSH_AWS_SECRET_ACCESS_KEY' => aws_secret_access_key,
       })
@@ -48,6 +48,12 @@ module Bosh::Dev
           adapter.upload(bucket_name: bucket_name, key: key, body: body, public: public)
 
           expect(fog_storage.directories.get(bucket_name).files.get(key).body).to eq(body)
+        end
+
+        it 'returns the created file object, used by the stemcell:upload_os_image Rake task' do
+          fog_storage.directories.create(key: bucket_name)
+          result = adapter.upload(bucket_name: bucket_name, key: key, body: body, public: public)
+          expect(result).to be_a(Fog::Storage::AWS::File)
         end
       end
 

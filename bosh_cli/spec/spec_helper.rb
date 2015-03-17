@@ -1,6 +1,5 @@
 require File.expand_path('../../../spec/shared_spec_helper', __FILE__)
 
-require 'rspec/its'
 require 'webmock'
 require 'timecop'
 require 'cli'
@@ -29,4 +28,9 @@ def get_tmp_file_path(content)
   tmp_file.write(content)
   tmp_file.close
   tmp_file.path
+end
+
+def strip_heredoc(str)
+  indent = str.scan(/^[ \t]*(?=\S)/).min.size || 0
+  str.gsub(/^[ \t]{#{indent}}/, '')
 end

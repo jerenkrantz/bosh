@@ -12,17 +12,17 @@ module Bosh::Dev::VCloud
   class RunnerBuilder
     def build(artifacts, net_type)
       env    = ENV
-      logger = Logger.new(STDOUT)
+      logger = Logging.logger(STDOUT)
+      logger.level = :debug
 
       director_address = Bosh::Dev::Bat::DirectorAddress.from_env(env, 'BOSH_VCLOUD_MICROBOSH_IP')
       bosh_cli_session = Bosh::Dev::BoshCliSession.default
       director_uuid    = Bosh::Dev::Bat::DirectorUuid.new(bosh_cli_session)
       stemcell_archive = Bosh::Stemcell::Archive.new(artifacts.stemcell_path)
 
-      microbosh_deployment_manifest =
-        MicroBoshDeploymentManifest.new(env)
+      microbosh_deployment_manifest = MicroBoshDeploymentManifest.new(env)
       bat_deployment_manifest =
-        BatDeploymentManifest.new(env, director_uuid, stemcell_archive)
+        BatDeploymentManifest.new(env, net_type, director_uuid, stemcell_archive)
 
       microbosh_deployment_cleaner = MicroBoshDeploymentCleaner.new(env, microbosh_deployment_manifest)
 

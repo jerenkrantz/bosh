@@ -1,20 +1,15 @@
 require 'spec_helper'
 
 describe 'cli: package compilation', type: :integration do
+  include Bosh::Spec::CreateReleaseOutputParsers
   with_reset_sandbox_before_each
-
-  def parse_release_tarball_path(create_release_output)
-    regex = /^Release tarball \(.*\): (.*\.tgz)$/
-    expect(create_release_output).to match(regex)
-    create_release_output.match(regex)[1]
-  end
 
   it 'uses compile package cache for previously compiled packages' do
     stemcell_filename = spec_asset('valid_stemcell.tgz')
 
     simple_blob_store_path = current_sandbox.blobstore_storage_dir
 
-    release_filename = Dir.chdir(TEST_RELEASE_DIR) do
+    release_filename = Dir.chdir(ClientSandbox.test_release_dir) do
       FileUtils.rm_rf('dev_releases')
       output = bosh_runner.run_in_current_dir('create release --with-tarball')
       parse_release_tarball_path(output)
@@ -47,15 +42,15 @@ describe 'cli: package compilation', type: :integration do
     expect(event_log).to_not match(/Compiling packages/)
   end
 
-  it 'compiles explicit requirements and dependencies recursively, but only applies explicit requirements to jobs' do
-    deployment_manifest_hash = Bosh::Spec::Deployments.simple_manifest
-    deployment_manifest_hash['jobs'][0]['template'] = ['foobar', 'goobaz']
-    deployment_manifest_hash['jobs'][0]['instances'] = 1
-    deployment_manifest_hash['resource_pools'][0]['size'] = 1
+  it 'sends only immediate dependancies to the agent for each package compilation task' do
+    manifest = Bosh::Spec::Deployments.simple_manifest
+    manifest['jobs'][0]['template'] = ['foobar', 'goobaz']
+    manifest['jobs'][0]['instances'] = 1
+    manifest['resource_pools'][0]['size'] = 1
 
-    deployment_manifest_hash['releases'].first['name'] = 'compilation-test'
+    manifest['releases'].first['name'] = 'compilation-test'
 
-    deployment_manifest = yaml_file('whatevs_manifest', deployment_manifest_hash)
+    deployment_manifest = yaml_file('whatevs_manifest', manifest)
 
     target_and_login
     bosh_runner.run("upload release #{spec_asset('release_compilation_test.tgz')}")
@@ -70,24 +65,27 @@ describe 'cli: package compilation', type: :integration do
     goo_package_compile = JSON.parse(goo_package_compile_json)
     expect(goo_package_compile['arguments'][2..3]).to eq(['goo', '0.1-dev.1'])
     expect(goo_package_compile['arguments'][4]).to have_key('boo')
+    expect(goo_package_compile['arguments'][4].size).to eq(1)
 
     baz_package_compile_regex = %r{compile_package.baz/0.1-dev.*(..method...compile_package.*)$}
     baz_package_compile_json = baz_package_compile_regex.match(deploy_results)[1]
     baz_package_compile = JSON.parse(baz_package_compile_json)
     expect(baz_package_compile['arguments'][2..3]).to eq(['baz', '0.1-dev.1'])
     expect(baz_package_compile['arguments'][4]).to have_key('goo')
-    expect(baz_package_compile['arguments'][4]).to have_key('boo')
+    expect(baz_package_compile['arguments'][4].size).to eq(1)
 
     foo_package_compile_regex = %r{compile_package.foo/0.1-dev.*(..method...compile_package.*)$}
     foo_package_compile_json = foo_package_compile_regex.match(deploy_results)[1]
     foo_package_compile = JSON.parse(foo_package_compile_json)
     expect(foo_package_compile['arguments'][2..4]).to eq(['foo', '0.1-dev.1', {}])
+    expect(foo_package_compile['arguments'][4].size).to eq(0)
 
     bar_package_compile_regex = %r{compile_package.bar/0.1-dev.*(..method...compile_package.*)$}
     bar_package_compile_json = bar_package_compile_regex.match(deploy_results)[1]
     bar_package_compile = JSON.parse(bar_package_compile_json)
     expect(bar_package_compile['arguments'][2..3]).to eq(['bar', '0.1-dev.1'])
     expect(bar_package_compile['arguments'][4]).to have_key('foo')
+    expect(bar_package_compile['arguments'][4].size).to eq(1)
 
     apply_spec_regex = %r{canary_update.foobar/0.*apply_spec_json.{5}(.+).{2}WHERE}
     apply_spec_json = apply_spec_regex.match(deploy_results)[1]
@@ -109,9 +107,9 @@ describe 'cli: package compilation', type: :integration do
 
     deploy_output = deploy_simple(manifest_hash: manifest_hash, failure_expected: true)
 
-    expect(deploy_output).to include('Truncated stdout: ++++++++++')
+    expect(deploy_output).to include('Truncated stdout: bbbbbbbbbb')
     expect(deploy_output).to include('Truncated stderr: yyyyyyyyyy')
-    expect(deploy_output).to_not include('---------')
+    expect(deploy_output).to_not include('aaaaaaaaa')
     expect(deploy_output).to_not include('nnnnnnnnn')
   end
 end

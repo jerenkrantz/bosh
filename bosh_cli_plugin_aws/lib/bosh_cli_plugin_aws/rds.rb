@@ -5,10 +5,10 @@ module Bosh
     class RDS
       DEFAULT_RDS_OPTIONS = {
           :allocated_storage => 5,
-          :db_instance_class => "db.t1.micro",
+          :db_instance_class => "db.m1.small",
           :engine => "mysql",
           :multi_az => true,
-          :engine_version => "5.5.31"
+          :engine_version => "5.5.40a"
       }
       DEFAULT_RDS_PROTOCOL = :tcp
       DEFAULT_MYSQL_PORT = 3306

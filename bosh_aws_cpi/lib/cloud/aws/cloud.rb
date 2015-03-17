@@ -162,13 +162,17 @@ module Bosh::AwsCloud
     # @param [optional, String] instance_id EC2 instance id
     #        of the VM that this disk will be attached to
     # @return [String] created EBS volume id
-    def create_disk(size, instance_id = nil)
+    def create_disk(size, cloud_properties, instance_id = nil)
       with_thread_name("create_disk(#{size}, #{instance_id})") do
         validate_disk_size(size)
 
         # if the disk is created for an instance, use the same availability zone as they must match
-        volume = @ec2.volumes.create(:size => (size / 1024.0).ceil,
-                                     :availability_zone => @az_selector.select_availability_zone(instance_id))
+        volume = @ec2.volumes.create(
+          size: (size / 1024.0).ceil,
+          availability_zone: @az_selector.select_availability_zone(instance_id),
+          volume_type: validate_disk_type(cloud_properties.fetch('type', 'standard')),
+          encrypted: cloud_properties.fetch('encrypted', false)
+        )
 
         logger.info("Creating volume '#{volume.id}'")
         ResourceWait.for_volume(volume: volume, state: :available)
@@ -178,10 +182,17 @@ module Bosh::AwsCloud
     end
 
     def validate_disk_size(size)
-      raise ArgumentError, "disk size needs to be an integer" unless size.kind_of?(Integer)
+      raise ArgumentError, 'disk size needs to be an integer' unless size.kind_of?(Integer)
 
-      cloud_error("AWS CPI minimum disk size is 1 GiB") if size < 1024
-      cloud_error("AWS CPI maximum disk size is 1 TiB") if size > 1024 * 1000
+      cloud_error('AWS CPI minimum disk size is 1 GiB') if size < 1024
+      cloud_error('AWS CPI maximum disk size is 1 TiB') if size > 1024 * 1000
+    end
+
+    def validate_disk_type(type)
+      unless %w[gp2 standard].include?(type)
+        cloud_error('AWS CPI supports only gp2 or standard disk type')
+      end
+      type
     end
 
     ##
@@ -403,7 +414,7 @@ module Bosh::AwsCloud
 
           # 1. Create and mount new EBS volume (2GB default)
           disk_size = stemcell_properties["disk"] || 2048
-          volume_id = create_disk(disk_size, current_vm_id)
+          volume_id = create_disk(disk_size, {}, current_vm_id)
           volume = @ec2.volumes[volume_id]
           instance = @ec2.instances[current_vm_id]
 
@@ -500,13 +511,23 @@ module Bosh::AwsCloud
       aws_params = {
           access_key_id:     aws_properties['access_key_id'],
           secret_access_key: aws_properties['secret_access_key'],
+          region:            aws_properties['region'],
           ec2_endpoint:      aws_properties['ec2_endpoint'] || default_ec2_endpoint,
           elb_endpoint:      aws_properties['elb_endpoint'] || default_elb_endpoint,
-          max_retries:       aws_properties['max_retries']  || DEFAULT_MAX_RETRIES ,
+          max_retries:       aws_properties['max_retries']  || DEFAULT_MAX_RETRIES,
           logger:            aws_logger
       }
 
-      aws_params[:proxy_uri] = aws_properties['proxy_uri'] if aws_properties['proxy_uri']
+      %w(
+        http_read_timeout
+        http_wire_trace
+        proxy_uri
+        ssl_verify_peer
+        ssl_ca_file
+        ssl_ca_path
+      ).each do |k|
+        aws_params[k.to_sym] = aws_properties[k] unless aws_properties[k].nil?
+      end
 
       # AWS Ruby SDK is threadsafe but Ruby autoload isn't,
       # so we need to trigger eager autoload while constructing CPI

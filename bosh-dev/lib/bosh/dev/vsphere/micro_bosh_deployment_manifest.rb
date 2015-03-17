@@ -7,13 +7,19 @@ module Bosh::Dev::VSphere
 
     attr_reader :filename
 
-    def initialize(env)
+    def initialize(env, net_type)
       @env = env
+      @net_type = net_type
       @filename = 'micro_bosh.yml'
+
+      unless net_type == 'manual'
+        raise "Specified #{net_type} networking but environment requires manual"
+      end
     end
 
     def to_h
-      { 'name' => 'microbosh-vsphere-jenkins',
+      {
+        'name' => 'microbosh-vsphere-jenkins',
         'network' =>
           { 'ip' => env['BOSH_VSPHERE_MICROBOSH_IP'],
             'netmask' => env['BOSH_VSPHERE_NETMASK'],
@@ -36,8 +42,7 @@ module Bosh::Dev::VSphere
                           'vm_folder' => "#{env['BOSH_VSPHERE_VCENTER_UBOSH_FOLDER_PREFIX']}_VMs",
                           'template_folder' =>
                             "#{env['BOSH_VSPHERE_VCENTER_UBOSH_FOLDER_PREFIX']}_Templates",
-                          'disk_path' =>
-                            "#{env['BOSH_VSPHERE_VCENTER_UBOSH_FOLDER_PREFIX']}_Disks",
+                          'disk_path' => env['BOSH_VSPHERE_VCENTER_DISK_PATH'] || "#{env['BOSH_VSPHERE_VCENTER_UBOSH_FOLDER_PREFIX']}_Disks",
                           'datastore_pattern' =>
                             env['BOSH_VSPHERE_VCENTER_UBOSH_DATASTORE_PATTERN'],
                           'persistent_datastore_pattern' =>
@@ -60,16 +65,14 @@ module Bosh::Dev::VSphere
                          'vm_folder' => "#{env['BOSH_VSPHERE_VCENTER_FOLDER_PREFIX']}_VMs",
                          'template_folder' =>
                            "#{env['BOSH_VSPHERE_VCENTER_FOLDER_PREFIX']}_Templates",
-                         'disk_path' => "#{env['BOSH_VSPHERE_VCENTER_FOLDER_PREFIX']}_Disks",
+                         'disk_path' => env['BOSH_VSPHERE_VCENTER_DISK_PATH'] || "#{env['BOSH_VSPHERE_VCENTER_FOLDER_PREFIX']}_Disks",
                          'datastore_pattern' => env['BOSH_VSPHERE_VCENTER_DATASTORE_PATTERN'],
                          'persistent_datastore_pattern' =>
                            env['BOSH_VSPHERE_VCENTER_DATASTORE_PATTERN'],
                          'allow_mixed_datastores' => true,
                          'clusters' =>
                            [{ env['BOSH_VSPHERE_VCENTER_CLUSTER'] =>
-                                { 'resource_pool' =>
-                                    env['BOSH_VSPHERE_VCENTER_RESOURCE_POOL']
-                                } }] }] } } } }
+                                { 'resource_pool' => env['BOSH_VSPHERE_VCENTER_RESOURCE_POOL']}}]}]}}}}
     end
 
     private

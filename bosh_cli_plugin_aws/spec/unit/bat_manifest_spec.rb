@@ -27,7 +27,7 @@ resource_pools:
   network: default
   size: 1
   cloud_properties:
-    instance_type: m1.small
+    instance_type: m1.medium
     availability_zone: us-east-1a
 
 compilation:
@@ -72,7 +72,6 @@ jobs:
 
 properties:
   vip: 50.200.100.2
-  static_ip: 10.10.0.29
   second_static_ip: 10.10.0.30
   uuid: director-uuid
   pool_size: 1
@@ -81,8 +80,9 @@ properties:
     version: \'stemcell-version\'
   instances: 1
   key_name:  dev102
-  mbus: nats://nats:0b450ada9f830085e2cdeff6@micro.cfdev.com:4222
-  network:
+  networks:
+  - name: default
+    static_ip: 10.10.0.29
     type: manual
     cidr: 10.10.0.0/24
     reserved:
@@ -106,7 +106,7 @@ properties:
     before { route53_receipt['elastic_ips']['bat']['ips'] = [] }
 
     it 'warns' do
-      subject.should_receive(:warning).with('Missing vip field')
+      expect(subject).to receive(:warning).with('Missing vip field')
       subject.to_y
     end
   end
@@ -127,18 +127,6 @@ properties:
     before { env['BOSH_AWS_SECOND_STATIC_IP'] = '192.168.0.1' }
 
     its(:second_static_ip) { should eq('192.168.0.1') }
-  end
-
-  context 'when domain is missing' do
-    before { vpc_receipt['vpc']['domain'] = nil }
-
-    it 'warns' do
-      subject
-        .should_receive(:warning)
-        .with('Missing domain field')
-        .at_least(1).times
-      subject.to_y
-    end
   end
 
   it 'generates the template' do

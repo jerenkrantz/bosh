@@ -17,14 +17,18 @@ Gem::Specification.new do |s|
   s.require_path = 'lib'
 
   s.add_dependency 'eventmachine',    '~>1.0.0'
-  s.add_dependency 'logging',         '~>1.5.0'
+  s.add_dependency 'logging',         '~>1.8.2'
   s.add_dependency 'em-http-request', '~>0.3.0'
   s.add_dependency 'nats',      '=0.5.0.beta.12'
-  s.add_dependency 'yajl-ruby', '~>1.1.0'
+  s.add_dependency 'yajl-ruby', '~>1.2.0'
   s.add_dependency 'thin',      '~>1.5.0'
   s.add_dependency 'sinatra',   '~>1.4.2'
-  s.add_dependency 'aws-sdk',   '1.44.0'
+  s.add_dependency 'aws-sdk',   '1.60.2'
   s.add_dependency 'dogapi',    '~> 1.6.0'
+
+  s.add_development_dependency 'rake'
+  s.add_development_dependency 'rspec'
+  s.add_development_dependency 'rspec-its'
 
   s.bindir      = 'bin'
   s.executables << 'bosh-monitor-console'

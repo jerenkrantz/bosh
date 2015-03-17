@@ -5,10 +5,13 @@ require 'bosh/dev/git_repo_updater'
 
 module Bosh::Dev
   class DeploymentsRepository
-    def initialize(env, options = {})
+    def initialize(env, logger, options = {})
       @env = env
+      @logger = logger
       @shell = Bosh::Core::Shell.new
       @path_root = options.fetch(:path_root) { env.fetch('WORKSPACE', '/tmp') }
+      @git_repo_updater = Bosh::Dev::GitRepoUpdater.new(logger)
+      @commit_message = options[:commit_message] || 'DeploymentsRepository: no commit message'
     end
 
     def path
@@ -20,8 +23,7 @@ module Bosh::Dev
     end
 
     def push
-      git_repo_updater = Bosh::Dev::GitRepoUpdater.new
-      git_repo_updater.update_directory(path)
+      @git_repo_updater.update_directory(path, @commit_message)
     end
 
     def update_and_push
@@ -36,12 +38,12 @@ module Bosh::Dev
     attr_reader :env, :shell, :path_root
 
     def update_repo
-      Dir.chdir(path) { shell.run('git pull') }
+      Dir.chdir(path) { shell.run('git clean -fd && git pull') }
     end
 
     def clone_repo
       FileUtils.mkdir_p(path, verbose: true)
-      shell.run("git clone #{env.fetch('BOSH_JENKINS_DEPLOYMENTS_REPO')} #{path}")
+      shell.run("git clone --depth=1 #{env.fetch('BOSH_JENKINS_DEPLOYMENTS_REPO')} #{path}")
     end
 
     def git_repo?(path)

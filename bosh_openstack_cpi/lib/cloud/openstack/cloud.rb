@@ -7,6 +7,8 @@ module Bosh::OpenStackCloud
   class Cloud < Bosh::Cloud
     include Helpers
 
+    OPTION_KEYS = ['openstack', 'registry', 'agent']
+
     BOSH_APP_DIR = '/var/vcap/bosh'
     FIRST_DEVICE_NAME_LETTER = 'b'
 
@@ -24,7 +26,7 @@ module Bosh::OpenStackCloud
     # @option options [Hash] agent agent options
     # @option options [Hash] registry agent options
     def initialize(options)
-      @options = options.dup
+      @options = normalize_options(options)
 
       validate_options
       initialize_registry
@@ -40,10 +42,15 @@ module Bosh::OpenStackCloud
       @stemcell_public_visibility = @openstack_properties["stemcell_public_visibility"]
       @wait_resource_poll_interval = @openstack_properties["wait_resource_poll_interval"]
       @boot_from_volume = @openstack_properties["boot_from_volume"]
+      @boot_volume_cloud_properties = @openstack_properties["boot_volume_cloud_properties"] || {}
 
       unless @openstack_properties['auth_url'].match(/\/tokens$/)
         @openstack_properties['auth_url'] = @openstack_properties['auth_url'] + '/tokens'
       end
+
+      @openstack_properties['connection_options'] ||= {}
+
+      extra_connection_options = {'instrumentor' => Bosh::OpenStackCloud::ExconLoggingInstrumentor}
 
       openstack_params = {
         :provider => 'OpenStack',
@@ -53,7 +60,7 @@ module Bosh::OpenStackCloud
         :openstack_tenant => @openstack_properties['tenant'],
         :openstack_region => @openstack_properties['region'],
         :openstack_endpoint_type => @openstack_properties['endpoint_type'],
-        :connection_options => @openstack_properties['connection_options']
+        :connection_options => @openstack_properties['connection_options'].merge(extra_connection_options)
       }
       begin
         @openstack = Fog::Compute.new(openstack_params)
@@ -61,6 +68,10 @@ module Bosh::OpenStackCloud
         @logger.error(e)
         cloud_error('Unable to connect to the OpenStack Compute API. Check task debug log for details.')
       end
+
+      @az_provider = Bosh::OpenStackCloud::AvailabilityZoneProvider.new(
+        @openstack,
+        @openstack_properties["ignore_server_availability_zone"])
 
       glance_params = {
         :provider => 'OpenStack',
@@ -70,7 +81,7 @@ module Bosh::OpenStackCloud
         :openstack_tenant => @openstack_properties['tenant'],
         :openstack_region => @openstack_properties['region'],
         :openstack_endpoint_type => @openstack_properties['endpoint_type'],
-        :connection_options => @openstack_properties['connection_options']
+        :connection_options => @openstack_properties['connection_options'].merge(extra_connection_options)
       }
       begin
         @glance = Fog::Image.new(glance_params)
@@ -81,12 +92,13 @@ module Bosh::OpenStackCloud
 
       volume_params = {
         :provider => "OpenStack",
-        :openstack_auth_url => @openstack_properties["auth_url"],
-        :openstack_username => @openstack_properties["username"],
-        :openstack_api_key => @openstack_properties["api_key"],
-        :openstack_tenant => @openstack_properties["tenant"],
-        :openstack_endpoint_type => @openstack_properties["endpoint_type"],
-        :connection_options => @openstack_properties['connection_options']
+        :openstack_auth_url => @openstack_properties['auth_url'],
+        :openstack_username => @openstack_properties['username'],
+        :openstack_api_key => @openstack_properties['api_key'],
+        :openstack_tenant => @openstack_properties['tenant'],
+        :openstack_region => @openstack_properties['region'],
+        :openstack_endpoint_type => @openstack_properties['endpoint_type'],
+        :connection_options => @openstack_properties['connection_options'].merge(extra_connection_options)
       }
       begin
         @volume = Fog::Volume.new(volume_params)
@@ -127,7 +139,9 @@ module Bosh::OpenStackCloud
             }
 
             image_properties = {}
-            vanilla_options = ['name', 'version', 'os_type', 'os_distro', 'architecture', 'auto_disk_config']
+            vanilla_options = ['name', 'version', 'os_type', 'os_distro', 'architecture', 'auto_disk_config',
+                               'hw_vif_model', 'hypervisor_type', 'vmware_adaptertype', 'vmware_disktype',
+                               'vmware_linked_clone', 'vmware_ostype']
             vanilla_options.reject{ |o| cloud_properties[o].nil? }.each do |key|
               image_properties[key.to_sym] = cloud_properties[key]
             end
@@ -189,7 +203,7 @@ module Bosh::OpenStackCloud
     #   power on new server
     # @param [Hash] resource_pool cloud specific properties describing the
     #   resources needed for this VM
-    # @param [Hash] networks list of networks and their settings needed for
+    # @param [Hash] network_spec list of networks and their settings needed for
     #   this VM
     # @param [optional, Array] disk_locality List of disks that might be
     #   attached to this server in the future, can be used as a placement
@@ -225,7 +239,7 @@ module Bosh::OpenStackCloud
           if flavor.ram
             # Ephemeral disk size should be at least the double of the vm total memory size, as agent will need:
             # - vm total memory size for swapon,
-            # - the rest for /vcar/vcap/data
+            # - the rest for /var/vcap/data
             min_ephemeral_size = (flavor.ram / 1024) * 2
             if flavor.ephemeral < min_ephemeral_size
               cloud_error("Flavor `#{resource_pool['instance_type']}' should have at least #{min_ephemeral_size}Gb " +
@@ -240,12 +254,10 @@ module Bosh::OpenStackCloud
         cloud_error("Key-pair `#{keyname}' not found") if keypair.nil?
         @logger.debug("Using key-pair: `#{keypair.name}' (#{keypair.fingerprint})")
 
-        if @boot_from_volume
-          boot_vol_size = flavor.disk * 1024
+        use_config_drive = !!@openstack_properties.fetch("config_drive", nil)
 
-          boot_vol_id = create_boot_disk(boot_vol_size, stemcell_id)
-          cloud_error("Failed to create boot volume.") if boot_vol_id.nil?
-          @logger.debug("Using boot volume: `#{boot_vol_id}'")
+        if resource_pool['scheduler_hints']
+          @logger.debug("Using scheduler hints: `#{resource_pool['scheduler_hints']}'")
         end
 
         server_params = {
@@ -254,14 +266,22 @@ module Bosh::OpenStackCloud
           :flavor_ref => flavor.id,
           :key_name => keypair.name,
           :security_groups => security_groups,
+          :os_scheduler_hints => resource_pool['scheduler_hints'],
           :nics => nics,
+          :config_drive => use_config_drive,
           :user_data => Yajl::Encoder.encode(user_data(server_name, network_spec))
         }
 
-        availability_zone = select_availability_zone(disk_locality, resource_pool['availability_zone'])
+        availability_zone = @az_provider.select(disk_locality, resource_pool['availability_zone'])
         server_params[:availability_zone] = availability_zone if availability_zone
 
         if @boot_from_volume
+          boot_vol_size = flavor.disk * 1024
+
+          boot_vol_id = create_boot_disk(boot_vol_size, stemcell_id, availability_zone, @boot_volume_cloud_properties)
+          cloud_error("Failed to create boot volume.") if boot_vol_id.nil?
+          @logger.debug("Using boot volume: `#{boot_vol_id}'")
+
           server_params[:block_device_mapping] = [{
                                                    :volume_size => "",
                                                    :volume_id => boot_vol_id,
@@ -361,7 +381,7 @@ module Bosh::OpenStackCloud
 
         compare_security_groups(server, network_configurator.security_groups(@default_security_groups))
 
-        compare_private_ip_addresses(server, network_configurator.private_ip)
+        compare_private_ip_addresses(server, network_configurator.private_ips)
 
         network_configurator.configure(@openstack, server)
 
@@ -378,19 +398,23 @@ module Bosh::OpenStackCloud
     # @param [optional, String] server_id OpenStack server UUID of the VM that
     #   this disk will be attached to
     # @return [String] OpenStack volume UUID
-    def create_disk(size, server_id = nil)
-      with_thread_name("create_disk(#{size}, #{server_id})") do
+    def create_disk(size, cloud_properties, server_id = nil)
+      with_thread_name("create_disk(#{size}, #{cloud_properties}, #{server_id})") do
         raise ArgumentError, 'Disk size needs to be an integer' unless size.kind_of?(Integer)
         cloud_error('Minimum disk size is 1 GiB') if (size < 1024)
         cloud_error('Maximum disk size is 1 TiB') if (size > 1024 * 1000)
 
         volume_params = {
-          :name => "volume-#{generate_unique_name}",
-          :description => '',
+          :display_name => "volume-#{generate_unique_name}",
+          :display_description => '',
           :size => (size / 1024.0).ceil
         }
 
-        if server_id
+        if cloud_properties.has_key?('type')
+          volume_params[:volume_type] = cloud_properties['type']
+        end
+
+        if server_id  && @az_provider.constrain_to_server_availability_zone?
           server = with_openstack { @openstack.servers.get(server_id) }
           if server && server.availability_zone
             volume_params[:availability_zone] = server.availability_zone
@@ -398,12 +422,12 @@ module Bosh::OpenStackCloud
         end
 
         @logger.info('Creating new volume...')
-        volume = with_openstack { @openstack.volumes.create(volume_params) }
+        new_volume = with_openstack { @volume.volumes.create(volume_params) }
 
-        @logger.info("Creating new volume `#{volume.id}'...")
-        wait_resource(volume, :available)
+        @logger.info("Creating new volume `#{new_volume.id}'...")
+        wait_resource(new_volume, :available)
 
-        volume.id.to_s
+        new_volume.id.to_s
       end
     end
 
@@ -413,9 +437,11 @@ module Bosh::OpenStackCloud
     # @param [Integer] size disk size in MiB
     # @param [String] stemcell_id OpenStack image UUID that will be used to
     #   populate the boot volume
+    # @param [optional, String] availability_zone to be passed to the volume API
+    # @param [optional, String] volume_type to be passed to the volume API
     # @return [String] OpenStack volume UUID
-    def create_boot_disk(size, stemcell_id)
-      with_thread_name("create_boot_disk(#{size}, #{stemcell_id})") do
+    def create_boot_disk(size, stemcell_id, availability_zone = nil, boot_volume_cloud_properties = {})
+      with_thread_name("create_boot_disk(#{size}, #{stemcell_id}, #{availability_zone}, #{boot_volume_cloud_properties})") do
         raise ArgumentError, "Disk size needs to be an integer" unless size.kind_of?(Integer)
         cloud_error("Minimum disk size is 1 GiB") if (size < 1024)
         cloud_error("Maximum disk size is 1 TiB") if (size > 1024 * 1000)
@@ -425,6 +451,11 @@ module Bosh::OpenStackCloud
           :size => (size / 1024.0).ceil,
           :imageRef => stemcell_id
         }
+
+        if availability_zone && @az_provider.constrain_to_server_availability_zone?
+          volume_params[:availability_zone] = availability_zone
+        end
+        volume_params[:volume_type] = boot_volume_cloud_properties["type"] if boot_volume_cloud_properties["type"]
 
         @logger.info("Creating new boot volume...")
         boot_volume = with_openstack { @volume.volumes.create(volume_params) }
@@ -596,29 +627,7 @@ module Bosh::OpenStackCloud
     # @return [String] availability zone to use or nil
     # @note this is a private method that is public to make it easier to test
     def select_availability_zone(volumes, resource_pool_az)
-      if volumes && !volumes.empty?
-        disks = volumes.map { |vid| with_openstack { @openstack.volumes.get(vid) } }
-        ensure_same_availability_zone(disks, resource_pool_az)
-        disks.first.availability_zone
-      else
-        resource_pool_az
-      end
-    end
-
-    ##
-    # Ensure all supplied availability zones are the same
-    #
-    # @param [Array] disks OpenStack volumes
-    # @param [String] default availability zone specified in
-    #   the resource pool (may be nil)
-    # @return [String] availability zone to use or nil
-    # @note this is a private method that is public to make it easier to test
-    def ensure_same_availability_zone(disks, default)
-      zones = disks.map { |disk| disk.availability_zone }
-      zones << default if default
-      zones.uniq!
-      cloud_error "can't use multiple availability zones: %s" %
-        zones.join(', ') unless zones.size == 1 || zones.empty?
+      @az_provider.select(volumes, resource_pool_az)
     end
 
     private
@@ -643,6 +652,7 @@ module Bosh::OpenStackCloud
       data['registry'] = { 'endpoint' => @registry.endpoint }
       data['server'] = { 'name' => server_name }
       data['openssh'] = { 'public_key' => public_key } if public_key
+      data['networks'] = network_spec
 
       with_dns(network_spec) do |servers|
         data['dns'] = { 'nameserver' => servers }
@@ -792,6 +802,7 @@ module Bosh::OpenStackCloud
 
       letter.succ! if flavor_has_ephemeral_disk?(flavor)
       letter.succ! if flavor_has_swap_disk?(flavor)
+      letter.succ! if @openstack_properties['config_drive'] == 'disk'
       letter
     end
 
@@ -804,8 +815,9 @@ module Bosh::OpenStackCloud
     def detach_volume(server, volume)
       @logger.info("Detaching volume `#{volume.id}' from `#{server.id}'...")
       volume_attachments = with_openstack { server.volume_attachments }
-      if volume_attachments.find { |a| a['volumeId'] == volume.id }
-        with_openstack { volume.detach(server.id, volume.id) }
+      attachment = volume_attachments.find { |a| a['volumeId'] == volume.id }
+      if attachment
+        with_openstack { volume.detach(server.id, attachment['id']) }
         wait_resource(volume, :available)
       else
         @logger.info("Disk `#{volume.id}' is not attached to server `#{server.id}'. Skipping.")
@@ -834,17 +846,17 @@ module Bosh::OpenStackCloud
     # Compares actual server private IP addresses with the IP address specified at the network spec
     #
     # @param [Fog::Compute::OpenStack::Server] server OpenStack server
-    # @param [String] specified_ip_address IP address specified at the network spec (if Manual network)
+    # @param [Array] specified_ip_addresses IP addresses specified at the network spec (if Manual network)
     # @return [void]
     # @raise [Bosh::Clouds:NotSupported] If the IP address change, we need to recreate the VM as you can't
     # change the IP address of a running server, so we need to send the InstanceUpdater a request to do it for us
-    def compare_private_ip_addresses(server, specified_ip_address)
+    def compare_private_ip_addresses(server, specified_ip_addresses)
       actual_ip_addresses = with_openstack { server.private_ip_addresses }
 
-      unless specified_ip_address.nil? || actual_ip_addresses.include?(specified_ip_address)
+      unless specified_ip_addresses.empty? || actual_ip_addresses.sort == specified_ip_addresses.sort
         raise Bosh::Clouds::NotSupported,
               'IP address change requires VM recreation: %s to %s' %
-              [actual_ip_addresses.join(', '), specified_ip_address]
+              [actual_ip_addresses.join(', '), specified_ip_addresses.join(', ')]
       end
     end
 
@@ -892,22 +904,35 @@ module Bosh::OpenStackCloud
     # @return [void]
     # @raise [ArgumentError] if options are not valid
     def validate_options
-      unless @options['openstack'].is_a?(Hash) &&
-          @options.has_key?('openstack') &&
-          @options['openstack']['auth_url'] &&
-          @options['openstack']['username'] &&
-          @options['openstack']['api_key'] &&
-          @options['openstack']['tenant']
-        raise ArgumentError, 'Invalid OpenStack configuration parameters'
+      schema = Membrane::SchemaParser.parse do
+        {
+          'openstack' => {
+            'auth_url' => String,
+            'username' => String,
+            'api_key' => String,
+            'tenant' => String,
+            optional('region') => String,
+            optional('endpoint_type') => String,
+            optional('state_timeout') => Numeric,
+            optional('stemcell_public_visibility') => enum(String, bool),
+            optional('connection_options') => Hash,
+            optional('boot_from_volume') => bool,
+            optional('default_key_name') => String,
+            optional('default_security_groups') => [String],
+            optional('wait_resource_poll_interval') => Integer,
+            optional('config_drive') => enum('disk', 'cdrom'),
+          },
+          'registry' => {
+            'endpoint' => String,
+            'user' => String,
+            'password' => String,
+          },
+          optional('agent') => Hash,
+        }
       end
-
-      unless @options.has_key?('registry') &&
-          @options['registry'].is_a?(Hash) &&
-          @options['registry']['endpoint'] &&
-          @options['registry']['user'] &&
-          @options['registry']['password']
-        raise ArgumentError, 'Invalid registry configuration parameters'
-      end
+      schema.validate(@options)
+    rescue Membrane::SchemaValidationError => e
+      raise ArgumentError, "Invalid OpenStack cloud properties: #{e.inspect}"
     end
 
     def initialize_registry
@@ -921,5 +946,34 @@ module Bosh::OpenStackCloud
                                              registry_password)
     end
 
+    def normalize_options(options)
+      unless options.kind_of?(Hash)
+        raise ArgumentError, "Invalid OpenStack cloud properties: Hash expected, received #{options}"
+      end
+      # we only care about two top-level fields
+      options = hash_filter(options.dup) { |key| OPTION_KEYS.include?(key) }
+      # nil values should be treated the same as missing keys (makes validating optional fields easier)
+      delete_entries_with_nil_keys(options)
+    end
+
+    def hash_filter(hash)
+      copy = {}
+      hash.each do |key, value|
+        copy[key] = value if yield(key)
+      end
+      copy
+    end
+
+    def delete_entries_with_nil_keys(options)
+      options.each do |key, value|
+        if value == nil
+          options.delete(key)
+        elsif value.kind_of?(Hash)
+          options[key] = delete_entries_with_nil_keys(value.dup)
+        end
+      end
+      options
+    end
   end
 end
+

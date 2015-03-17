@@ -1,3 +1,4 @@
+require 'ruby_vim_sdk'
 require 'cloud/vsphere/cluster_config'
 
 module VSphereCloud
@@ -41,14 +42,17 @@ module VSphereCloud
 
     def client
       unless @client
-        @client = Client.new("https://#{vcenter['host']}/sdk/vimService", {
-          'soap_log' => config['soap_log'] || config['cpi_log']
-        })
+        host = "https://#{vcenter['host']}/sdk/vimService"
+        @client = Client.new(host, soap_log: soap_log)
 
         @client.login(vcenter['user'], vcenter['password'], 'en')
       end
 
       @client
+    end
+
+    def soap_log
+      config['soap_log'] || config['cpi_log']
     end
 
     def rest_client
@@ -68,10 +72,6 @@ module VSphereCloud
 
     def mem_overcommit
       config.fetch('mem_overcommit_ratio', @default_overcommit_ratio)
-    end
-
-    def copy_disks
-      !!config['copy_disks']
     end
 
     def agent
@@ -118,10 +118,6 @@ module VSphereCloud
       @cluster_objs ||= cluster_objs
     end
 
-    def datacenter_allow_mixed_datastores
-      !!vcenter_datacenter['allow_mixed_datastores']
-    end
-
     def datacenter_use_sub_folder
       datacenter_clusters.any? { |_, cluster| cluster.resource_pool } ||
         !!vcenter_datacenter['use_sub_folder']
@@ -151,7 +147,6 @@ module VSphereCloud
           optional('cpi_log') => enum(String, Object),
           optional('soap_log') => enum(String, Object),
           optional('mem_overcommit_ratio') => Numeric,
-          optional('copy_disks') => bool,
           'vcenters' => [{
             'host' => String,
             'user' => String,
@@ -166,7 +161,10 @@ module VSphereCloud
               'persistent_datastore_pattern' => String,
               optional('allow_mixed_datastores') => bool,
               'clusters' => [enum(String,
-                dict(String, { 'resource_pool' => String }))]
+                dict(String, {
+                  'resource_pool' => String
+                })
+              )]
             }]
           }]
         }

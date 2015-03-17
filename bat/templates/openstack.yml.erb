@@ -11,7 +11,7 @@ compilation:
   network: default
   reuse_compilation_vms: true
   cloud_properties:
-    instance_type: m1.small
+    instance_type: <%= properties.instance_type || 'm1.small' %>
     <% if properties.key_name %>
     key_name: <%= properties.key_name %>
     <% end %>
@@ -27,30 +27,36 @@ networks:
   type: vip
   cloud_properties: {}
 
-- name: default
-  type: <%= p('network.type') %>
-  <% if p('network.type') == 'manual' %>
+<% properties.networks.each do |network| %>
+- name: <%= network.name %>
+  type: <%= network.type %>
+  <% if network.type == 'manual' %>
   subnets:
-  - range: <%= properties.network.cidr %>
+  - range: <%= network.cidr %>
     reserved:
-      <% properties.network.reserved.each do |range| %>
+      <% network.reserved.each do |range| %>
       - <%= range %>
       <% end %>
     static:
-      <% properties.network.static.each do |range| %>
+      <% network.static.each do |range| %>
       - <%= range %>
       <% end %>
-    gateway: <%= properties.network.gateway %>
+    gateway: <%= network.gateway %>
     dns: <%= p('dns').inspect %>
     cloud_properties:
-      security_groups: <%= p('network.cloud_properties.security_groups') %>
-      net_id: <%= p('network.cloud_properties.net_id') %>
+      security_groups: <%= network.cloud_properties.security_groups %>
+      <% if network.cloud_properties.net_id %>
+      net_id: <%= network.cloud_properties.net_id %>
+      <% end %>
   <% else %>
   dns: <%= p('dns').inspect %>
   cloud_properties:
-    security_groups: <%= p('network.cloud_properties.security_groups') %>
-    net_id: <%= p('network.cloud_properties.net_id') %>
+    security_groups: <%= network.cloud_properties.security_groups %>
+    <% if network.cloud_properties.net_id %>
+    net_id: <%= network.cloud_properties.net_id %>
+    <% end %>
   <% end %>
+<% end %>
 
 resource_pools:
   - name: common
@@ -60,7 +66,7 @@ resource_pools:
       name: <%= properties.stemcell.name %>
       version: '<%= properties.stemcell.version %>'
     cloud_properties:
-      instance_type: m1.small
+      instance_type: <%= properties.instance_type || 'm1.small' %>
       <% if properties.key_name %>
       key_name: <%= properties.key_name %>
       <% end %>
@@ -72,29 +78,38 @@ resource_pools:
 
 jobs:
   - name: <%= properties.job || "batlight" %>
-    template: <%= properties.template || properties.job || "batlight" %>
+    templates: <% (properties.templates || ["batlight"]).each do |template| %>
+    - name: <%= template %>
+    <% end %>
     instances: <%= properties.instances %>
     resource_pool: common
     <% if properties.persistent_disk %>
     persistent_disk: <%= properties.persistent_disk %>
     <% end %>
     networks:
-      - name: default
+    <% properties.job_networks.each_with_index do |network, i| %>
+      - name: <%= network.name %>
+      <% if i == 0 %>
         default: [dns, gateway]
-      <% if p('network.type') == 'manual' %>
+      <% end %>
+      <% if network.type == 'manual' %>
         static_ips:
         <% if properties.use_static_ip %>
-          - <%= properties.deployment_static_ip %>
+        - <%= network.static_ip %>
         <% end %>
       <% end %>
-      <% if properties.use_vip %>
+    <% end %>
+    <% if properties.use_vip %>
       - name: static
         static_ips:
           - <%= properties.vip %>
-      <% end %>
+    <% end %>
+
 
 properties:
-  mbus: <%= properties.mbus %>
+  openstack:
+    connection_options:
+      idempotent: true
   batlight:
     <% if properties.batlight.fail %>
     fail: <%= properties.batlight.fail %>

@@ -1,7 +1,6 @@
 require 'digest/sha1'
 require 'fileutils'
 require 'securerandom'
-require 'mono_logger'
 
 module Bosh
   module Clouds
@@ -19,8 +18,14 @@ module Bosh
         end
 
         @running_vms_dir = File.join(@base_dir, 'running_vms')
+        @tmp_dir = File.join(@base_dir, 'tmp')
+        FileUtils.mkdir_p(@tmp_dir)
 
-        @logger = MonoLogger.new(options['log_device'] || STDOUT)
+        @logger = Logging::Logger.new('DummyCPI')
+        @logger.add_appenders(Logging.appenders.io(
+          'DummyCPIIO',
+          options['log_buffer'] || STDOUT
+        ))
 
         @commands = CommandTransport.new(@base_dir, @logger)
 
@@ -84,6 +89,10 @@ module Bosh
         File.exists?(vm_file(vm_id))
       end
 
+      def has_disk?(disk_id)
+        File.exists?(disk_file(disk_id))
+      end
+
       def configure_networks(vm_id, networks)
         cmd = commands.next_configure_networks_cmd(vm_id)
 
@@ -115,7 +124,7 @@ module Bosh
         write_agent_settings(agent_id, settings)
       end
 
-      def create_disk(size, vm_locality = nil)
+      def create_disk(size, cloud_properties, vm_locality = nil)
         disk_id = SecureRandom.hex
         file = disk_file(disk_id)
         FileUtils.mkdir_p(File.dirname(file))
@@ -146,6 +155,11 @@ module Bosh
         Dir.glob(File.join(@running_vms_dir, '*')).map { |vm| File.basename(vm) }.shuffle
       end
 
+      def disk_cids
+        # Shuffle so that no one relies on the order of disks
+        Dir.glob(disk_file('*')).map { |disk| File.basename(disk) }.shuffle
+      end
+
       def kill_agents
         vm_cids.each do |agent_pid|
           begin
@@ -172,11 +186,15 @@ module Bosh
         agent_cmd = agent_cmd(agent_id)
         agent_log = agent_log_path(agent_id)
 
-        agent_pid = Process.spawn(*agent_cmd, {
-          chdir: agent_base_dir(agent_id),
-          out: agent_log,
-          err: agent_log,
-        })
+        agent_pid = Process.spawn(
+          { 'TMPDIR' => @tmp_dir },
+          *agent_cmd,
+          {
+            chdir: agent_base_dir(agent_id),
+            out: agent_log,
+            err: agent_log,
+          }
+        )
 
         Process.detach(agent_pid)
 
@@ -211,8 +229,25 @@ module Bosh
       end
 
       def agent_cmd(agent_id)
+        agent_config_file = File.join(agent_base_dir(agent_id), 'agent.json')
+
+        agent_config = {
+          'Infrastructure' => {
+            'Settings' => {
+              'Sources' => [{
+                'Type' => 'File',
+                'SettingsPath' => agent_settings_file(agent_id)
+              }],
+              'UseRegistry' => true
+            }
+          }
+        }
+
+        File.write(agent_config_file, JSON.generate(agent_config))
+
         go_agent_exe = File.expand_path('../../../../go/src/github.com/cloudfoundry/bosh-agent/out/bosh-agent', __FILE__)
-        %W[#{go_agent_exe} -b #{agent_base_dir(agent_id)} -I dummy -P dummy -M dummy-nats]
+
+        %W[#{go_agent_exe} -b #{agent_base_dir(agent_id)} -P dummy -M dummy-nats -C #{agent_config_file}]
       end
 
       def read_agent_settings(agent_id)

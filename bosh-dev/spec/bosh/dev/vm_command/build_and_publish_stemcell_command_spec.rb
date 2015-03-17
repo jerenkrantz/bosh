@@ -13,15 +13,22 @@ module Bosh::Dev
       }
     end
 
-    let(:build_environment) { double('Bosh::Stemcell::BuildEnvironment', stemcell_file: 'fake-stemcell.tgz') }
+    let(:build_environment) do
+      double('Bosh::Stemcell::BuildEnvironment',
+        stemcell_files: ['fake-stemcell-1.tgz', 'fake-stemcell-2.tgz']
+      )
+    end
+
     let(:options) do
       {
         infrastructure_name: 'fake-infrastructure_name',
+        hypervisor_name: 'fake-hypervisor_name',
         operating_system_name: 'fake-operating_system_name',
         operating_system_version: 'fake-operating_system_version',
         agent_name: 'fake-agent_name',
         os_image_s3_bucket_name: 'fake-bucket',
         os_image_s3_key: 'fake-key',
+        publish_s3_bucket_name: 'fake-publish-bucket',
       }
     end
 
@@ -36,8 +43,9 @@ module Bosh::Dev
           export BOSH_AWS_ACCESS_KEY_ID='fake-BOSH_AWS_ACCESS_KEY_ID'
           export BOSH_AWS_SECRET_ACCESS_KEY='fake-BOSH_AWS_SECRET_ACCESS_KEY'
 
-          bundle exec rake stemcell:build[fake-infrastructure_name,fake-operating_system_name,fake-operating_system_version,fake-agent_name,fake-bucket,fake-key]
-          bundle exec rake ci:publish_stemcell[fake-stemcell.tgz]
+          bundle exec rake stemcell:build[fake-infrastructure_name,fake-hypervisor_name,fake-operating_system_name,fake-operating_system_version,fake-agent_name,fake-bucket,fake-key]
+          bundle exec rake ci:publish_stemcell[fake-stemcell-1.tgz,fake-publish-bucket]
+          bundle exec rake ci:publish_stemcell[fake-stemcell-2.tgz,fake-publish-bucket]
         BASH
 
         expect(strip_heredoc(subject.to_s)).to eq(strip_heredoc(expected_cmd))
@@ -47,14 +55,14 @@ module Bosh::Dev
         before { env['UBUNTU_ISO'] = 'fake-UBUNTU_ISO' }
 
         it 'includes the UBUNTU_ISO export' do
-          subject.to_s.should_not match(/bundle.*(?=export)/m)
-          subject.to_s.should match(/export UBUNTU_ISO='fake-UBUNTU_ISO'/)
+          expect(subject.to_s).not_to match(/bundle.*(?=export)/m)
+          expect(subject.to_s).to match(/export UBUNTU_ISO='fake-UBUNTU_ISO'/)
         end
       end
     end
 
     def strip_heredoc(str)
-      str.gsub(/^\s+/, '')
+      str.gsub(/^\s+/, '').chomp
     end
   end
 end

@@ -22,14 +22,12 @@ module Bosh::Dev::Openstack
         'network' => {
           'type' => net_type,
           'vip' => env['BOSH_OPENSTACK_VIP_DIRECTOR_IP'],
-          'cloud_properties' => {
-            'net_id' => env['BOSH_OPENSTACK_NET_ID']
-          }
+          'cloud_properties' => {}
         },
         'resources' => {
           'persistent_disk' => 4096,
           'cloud_properties' => {
-            'instance_type' => 'm1.small'
+            'instance_type' => env.fetch('BOSH_OPENSTACK_FLAVOR', 'm1.small'),
           }
         },
         'cloud' => {
@@ -53,6 +51,10 @@ module Bosh::Dev::Openstack
         },
       }
 
+      if env['BOSH_OPENSTACK_MICRO_NET_ID']
+        result['network']['cloud_properties']['net_id'] = env['BOSH_OPENSTACK_MICRO_NET_ID']
+      end
+
       result['network']['ip'] = env['BOSH_OPENSTACK_MANUAL_IP'] if net_type == 'manual'
 
       result
@@ -71,8 +73,8 @@ module Bosh::Dev::Openstack
           'tenant' => env['BOSH_OPENSTACK_TENANT'],
           'region' => env['BOSH_OPENSTACK_REGION'],
           'endpoint_type' => 'publicURL',
-          'default_key_name' => 'jenkins',
-          'default_security_groups' => ['default'],
+          'default_key_name' => default_key_name,
+          'default_security_groups' => default_security_groups,
           'private_key' => env['BOSH_OPENSTACK_PRIVATE_KEY'],
           'state_timeout' => state_timeout,
           'wait_resource_poll_interval' => 5,
@@ -100,6 +102,16 @@ module Bosh::Dev::Openstack
     def connection_timeout
       timeout = env['BOSH_OPENSTACK_CONNECTION_TIMEOUT']
       timeout.to_s.empty? ? 60.0 : timeout.to_f
+    end
+
+    def default_key_name
+      key_name = env['BOSH_OPENSTACK_DEFAULT_KEY_NAME']
+      key_name.to_s.empty? ? 'jenkins' : key_name
+    end
+
+    def default_security_groups
+      group = env['BOSH_OPENSTACK_DEFAULT_SECURITY_GROUP']
+      group.to_s.empty? ? ['default'] : [group]
     end
   end
 end
